@@ -253,6 +253,15 @@
     `;
 
     searchEl.insertBefore(banner, searchEl.firstChild);
+
+    const upgradeLink = banner.querySelector('#staleLimitUpgrade');
+    if (upgradeLink) {
+      upgradeLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        const url = (CONFIG && CONFIG.CHECKOUT_URL) || 'https://buy.stripe.com/14A4gydLk4PGgAcgEdaEE00';
+        window.open(url, '_blank', 'noopener');
+      });
+    }
   }
 
 })();

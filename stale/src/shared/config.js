@@ -42,6 +42,11 @@ window.Stale.CONFIG = {
     grey:   'Unknown'
   },
 
+  // Payment: Stripe Checkout for Stale Pro
+  CHECKOUT_URL: 'https://buy.stripe.com/14A4gydLk4PGgAcgEdaEE00',
+  // Optional: backend URL to validate license keys (POST { key } → { valid: true } or 4xx)
+  LICENSE_VERIFY_URL: '',
+
   // Message types for SW communication
   MSG: {
     GET_HTTP_DATE:    'GET_HTTP_DATE',
@@ -50,6 +55,7 @@ window.Stale.CONFIG = {
     GET_CACHE:        'GET_CACHE',
     SET_CACHE:        'SET_CACHE',
     GET_LICENSE:      'GET_LICENSE',
+    SET_LICENSE:      'SET_LICENSE',
     GET_PREFERENCES:  'GET_PREFERENCES',
     SET_PREFERENCES:  'SET_PREFERENCES',
     TOGGLE_ENABLED:   'TOGGLE_ENABLED'

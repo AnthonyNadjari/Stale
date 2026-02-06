@@ -93,8 +93,54 @@
   });
 
   upgradeBtn.addEventListener('click', () => {
-    // Placeholder: in production, this would open Stripe Checkout or CWS payment
-    chrome.tabs.create({ url: 'https://example.com/stale-pro' });
+    const url = (window.Stale && window.Stale.CONFIG && window.Stale.CONFIG.CHECKOUT_URL) || 'https://buy.stripe.com/14A4gydLk4PGgAcgEdaEE00';
+    chrome.tabs.create({ url });
+  });
+
+  const licenseKeyToggle = document.getElementById('licenseKeyToggle');
+  const licenseKeyForm = document.getElementById('licenseKeyForm');
+  const licenseKeyInput = document.getElementById('licenseKeyInput');
+  const licenseKeyActivate = document.getElementById('licenseKeyActivate');
+  const licenseKeyError = document.getElementById('licenseKeyError');
+
+  licenseKeyToggle?.addEventListener('click', () => {
+    const hidden = licenseKeyForm.style.display === 'none';
+    licenseKeyForm.style.display = hidden ? 'flex' : 'none';
+    if (hidden) licenseKeyInput.focus();
+    licenseKeyError.textContent = '';
+  });
+
+  licenseKeyActivate?.addEventListener('click', async () => {
+    const key = (licenseKeyInput?.value || '').trim();
+    licenseKeyError.textContent = '';
+    if (!key) {
+      licenseKeyError.textContent = 'Enter your license key';
+      return;
+    }
+    const verifyUrl = (window.Stale && window.Stale.CONFIG && window.Stale.CONFIG.LICENSE_VERIFY_URL) || '';
+    if (verifyUrl) {
+      try {
+        const res = await fetch(verifyUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !(data.valid === true || data.ok === true)) {
+          licenseKeyError.textContent = data.message || 'Invalid or expired key';
+          return;
+        }
+      } catch (e) {
+        licenseKeyError.textContent = 'Could not verify key. Try again.';
+        return;
+      }
+    }
+    await sendMessage('SET_LICENSE', { isPaid: true });
+    upgradeSection.style.display = 'none';
+    proSection.style.display = 'flex';
+    updateQuota(await sendMessage('CHECK_QUOTA'), { isPaid: true });
+    licenseKeyForm.style.display = 'none';
+    licenseKeyInput.value = '';
   });
 
   document.querySelector('.popup__footer-link')?.addEventListener('click', (e) => {

@@ -10,6 +10,7 @@ const MSG = {
   GET_CACHE:       'GET_CACHE',
   SET_CACHE:       'SET_CACHE',
   GET_LICENSE:     'GET_LICENSE',
+  SET_LICENSE:     'SET_LICENSE',
   GET_PREFERENCES: 'GET_PREFERENCES',
   SET_PREFERENCES: 'SET_PREFERENCES',
   TOGGLE_ENABLED:  'TOGGLE_ENABLED'
@@ -151,6 +152,15 @@ async function handleMessage(msg) {
     case MSG.GET_LICENSE: {
       const data = await getStorage(['license']);
       return data.license || DEFAULTS.license;
+    }
+
+    case MSG.SET_LICENSE: {
+      const license = {
+        isPaid: msg.isPaid !== false,
+        purchaseDate: msg.purchaseDate || (msg.isPaid ? new Date().toISOString().slice(0, 10) : null)
+      };
+      await setStorage({ license });
+      return { ok: true, license };
     }
 
     case MSG.GET_PREFERENCES: {

@@ -48,6 +48,10 @@ window.Stale.Messaging = (() => {
     return send(MSG.GET_LICENSE);
   }
 
+  function setLicense(payload) {
+    return send(MSG.SET_LICENSE, payload);
+  }
+
   function getPreferences() {
     return send(MSG.GET_PREFERENCES);
   }
@@ -62,7 +66,7 @@ window.Stale.Messaging = (() => {
 
   return {
     send, getHttpDate, checkQuota, incrementQuota,
-    getCache, setCache, getLicense,
+    getCache, setCache, getLicense, setLicense,
     getPreferences, setPreferences, toggleEnabled
   };
 

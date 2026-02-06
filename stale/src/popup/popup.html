@@ -94,6 +94,14 @@
       <div class="popup__upgrade-title">Stale Pro</div>
       <div class="popup__upgrade-desc">Unlimited SERP badges, filter old results, export reports.</div>
       <button class="popup__upgrade-btn" id="upgradeBtn">Upgrade — $4.99</button>
+      <div class="popup__license-key">
+        <button type="button" class="popup__license-key-toggle" id="licenseKeyToggle">Have a license key?</button>
+        <div class="popup__license-key-form" id="licenseKeyForm" style="display:none">
+          <input type="text" id="licenseKeyInput" class="popup__license-key-input" placeholder="Paste your key">
+          <button type="button" class="popup__license-key-btn" id="licenseKeyActivate">Activate</button>
+          <div class="popup__license-key-error" id="licenseKeyError"></div>
+        </div>
+      </div>
     </div>
 
     <!-- Pro badge (paid) -->
@@ -108,6 +116,7 @@
 
   </div>
 
+  <script src="../shared/config.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
