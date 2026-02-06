@@ -56,6 +56,20 @@
   showSerpCheckbox.checked  = prefs.showBadgeOnSerp !== false;
   positionSelect.value      = prefs.badgePosition || 'top-right';
 
+  // If "Badge on pages" is on but optional permission not yet granted, request it once
+  if (showPagesCheckbox.checked) {
+    const hasAllUrls = await new Promise(r =>
+      chrome.permissions.contains({ origins: ['<all_urls>'] }, r)
+    );
+    if (!hasAllUrls) {
+      const granted = await new Promise(r =>
+        chrome.permissions.request({ origins: ['<all_urls>'] }, r)
+      );
+      if (!granted) showPagesCheckbox.checked = false;
+      else savePrefs({ showBadgeOnPages: true });
+    }
+  }
+
   // License
   if (license.isPaid) {
     upgradeSection.style.display = 'none';
@@ -82,7 +96,22 @@
     saveThresholds();
   });
 
-  showPagesCheckbox.addEventListener('change', () => {
+  showPagesCheckbox.addEventListener('change', async () => {
+    const enabled = showPagesCheckbox.checked;
+    if (enabled) {
+      const hasAllUrls = await new Promise(r =>
+        chrome.permissions.contains({ origins: ['<all_urls>'] }, r)
+      );
+      if (!hasAllUrls) {
+        const granted = await new Promise(r =>
+          chrome.permissions.request({ origins: ['<all_urls>'] }, r)
+        );
+        if (!granted) {
+          showPagesCheckbox.checked = false;
+          return;
+        }
+      }
+    }
     savePrefs({ showBadgeOnPages: showPagesCheckbox.checked });
   });
   showSerpCheckbox.addEventListener('change', () => {

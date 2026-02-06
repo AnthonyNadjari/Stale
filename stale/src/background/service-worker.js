@@ -4,17 +4,25 @@
  */
 
 const MSG = {
-  GET_HTTP_DATE:   'GET_HTTP_DATE',
-  CHECK_QUOTA:     'CHECK_QUOTA',
-  INCREMENT_QUOTA: 'INCREMENT_QUOTA',
-  GET_CACHE:       'GET_CACHE',
-  SET_CACHE:       'SET_CACHE',
-  GET_LICENSE:     'GET_LICENSE',
-  SET_LICENSE:     'SET_LICENSE',
-  GET_PREFERENCES: 'GET_PREFERENCES',
-  SET_PREFERENCES: 'SET_PREFERENCES',
-  TOGGLE_ENABLED:  'TOGGLE_ENABLED'
+  GET_HTTP_DATE:        'GET_HTTP_DATE',
+  CHECK_QUOTA:          'CHECK_QUOTA',
+  INCREMENT_QUOTA:      'INCREMENT_QUOTA',
+  GET_CACHE:            'GET_CACHE',
+  SET_CACHE:            'SET_CACHE',
+  GET_LICENSE:          'GET_LICENSE',
+  SET_LICENSE:          'SET_LICENSE',
+  GET_PREFERENCES:      'GET_PREFERENCES',
+  SET_PREFERENCES:      'SET_PREFERENCES',
+  TOGGLE_ENABLED:       'TOGGLE_ENABLED',
+  UNREGISTER_PAGE_SCRIPT: 'UNREGISTER_PAGE_SCRIPT'
 };
+
+const PAGE_ANALYZER_SCRIPT_ID = 'stale-page-analyzer';
+const GOOGLE_SERP_PATTERNS = [
+  '*://www.google.com/search*', '*://www.google.co.uk/search*', '*://www.google.fr/search*',
+  '*://www.google.de/search*', '*://www.google.es/search*', '*://www.google.it/search*',
+  '*://www.google.ca/search*', '*://www.google.com.au/search*', '*://www.google.com.br/search*'
+];
 
 const DEFAULTS = {
   cache: {},
@@ -58,24 +66,73 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'cache-cleanup') cleanupCache();
 });
 
-// ── HTTP Header Capture ─────────────────────────────────
+// ── HTTP Header Capture (only when optional <all_urls> is granted) ───────
 
-chrome.webRequest.onHeadersReceived.addListener(
-  (details) => {
-    if (details.type !== 'main_frame') return;
+function onHeadersReceived(details) {
+  if (details.type !== 'main_frame') return;
+  const lastMod = details.responseHeaders?.find(
+    h => h.name.toLowerCase() === 'last-modified'
+  );
+  if (lastMod?.value) {
+    httpDateStore.set(details.url, lastMod.value);
+    setTimeout(() => httpDateStore.delete(details.url), 5 * 60 * 1000);
+  }
+}
 
-    const lastMod = details.responseHeaders?.find(
-      h => h.name.toLowerCase() === 'last-modified'
+let webRequestListenerActive = false;
+
+async function setupPageAnalyzerAndWebRequest() {
+  const hasAllUrls = await new Promise(r =>
+    chrome.permissions.contains({ origins: ['<all_urls>'] }, r)
+  );
+  if (!hasAllUrls) return;
+
+  const data = await getStorage(['preferences']);
+  const prefs = data.preferences || DEFAULTS.preferences;
+  if (!prefs.showBadgeOnPages) return;
+
+  if (!webRequestListenerActive) {
+    chrome.webRequest.onHeadersReceived.addListener(
+      onHeadersReceived,
+      { urls: ['<all_urls>'] },
+      ['responseHeaders']
     );
-    if (lastMod?.value) {
-      httpDateStore.set(details.url, lastMod.value);
-      // Auto-purge after 5 minutes to avoid unbounded growth
-      setTimeout(() => httpDateStore.delete(details.url), 5 * 60 * 1000);
+    webRequestListenerActive = true;
+  }
+
+  try {
+    const existing = await chrome.scripting.getRegisteredContentScripts();
+    if (existing.some(s => s.id === PAGE_ANALYZER_SCRIPT_ID)) return;
+  } catch (_) {}
+
+  await chrome.scripting.registerContentScripts([{
+    id: PAGE_ANALYZER_SCRIPT_ID,
+    matches: ['<all_urls>'],
+    excludeMatches: GOOGLE_SERP_PATTERNS,
+    js: [
+      'src/shared/config.js', 'src/shared/date-utils.js', 'src/shared/freshness.js', 'src/shared/messaging.js',
+      'src/extractors/meta-extractor.js', 'src/extractors/jsonld-extractor.js', 'src/extractors/time-element-extractor.js',
+      'src/extractors/heuristic-extractor.js', 'src/extractors/index.js', 'src/content/page/page-analyzer.js'
+    ],
+    css: ['src/content/page/badge-overlay.css'],
+    runAt: 'document_idle'
+  }]);
+}
+
+async function unregisterPageAnalyzer() {
+  if (webRequestListenerActive) {
+    try {
+      chrome.webRequest.onHeadersReceived.removeListener(onHeadersReceived);
+    } catch (_) {}
+    webRequestListenerActive = false;
+  }
+  try {
+    const scripts = await chrome.scripting.getRegisteredContentScripts();
+    if (scripts.some(s => s.id === PAGE_ANALYZER_SCRIPT_ID)) {
+      await chrome.scripting.unregisterContentScripts({ ids: [PAGE_ANALYZER_SCRIPT_ID] });
     }
-  },
-  { urls: ['<all_urls>'] },
-  ['responseHeaders']
-);
+  } catch (_) {}
+}
 
 // ── Message Handler ─────────────────────────────────────
 
@@ -173,6 +230,16 @@ async function handleMessage(msg) {
       const current = data.preferences || DEFAULTS.preferences;
       const merged = { ...current, ...msg.prefs };
       await setStorage({ preferences: merged });
+      if (merged.showBadgeOnPages === false) {
+        await unregisterPageAnalyzer();
+      } else if (merged.showBadgeOnPages) {
+        await setupPageAnalyzerAndWebRequest();
+      }
+      return { ok: true };
+    }
+
+    case MSG.UNREGISTER_PAGE_SCRIPT: {
+      await unregisterPageAnalyzer();
       return { ok: true };
     }
 
@@ -233,14 +300,23 @@ async function cleanupCache() {
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') {
-    // Set defaults on first install
     const data = await getStorage(['preferences', 'quota', 'license']);
     if (!data.preferences) await setStorage({ preferences: DEFAULTS.preferences });
     if (!data.quota) await setStorage({ quota: DEFAULTS.quota });
     if (!data.license) await setStorage({ license: DEFAULTS.license });
     if (!data.cache) await setStorage({ cache: {} });
   }
+  await setupPageAnalyzerAndWebRequest();
 });
+
+chrome.permissions.onAdded.addListener((permissions) => {
+  if (permissions.origins && permissions.origins.includes('<all_urls>')) {
+    setupPageAnalyzerAndWebRequest();
+  }
+});
+
+// On service worker startup, register page script if permission + prefs allow
+setupPageAnalyzerAndWebRequest();
 
 // ── Helpers ─────────────────────────────────────────────
 
