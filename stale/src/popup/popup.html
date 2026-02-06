@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=320">
+  <link rel="stylesheet" href="popup.css">
+  <title>Stale</title>
+</head>
+<body>
+  <div class="popup">
+
+    <!-- Header -->
+    <div class="popup__header">
+      <div class="popup__logo">
+        <span class="popup__logo-dot"></span>
+        <span class="popup__logo-text">Stale</span>
+      </div>
+      <label class="toggle" id="toggleEnabled">
+        <input type="checkbox" id="enabledCheckbox">
+        <span class="toggle__slider"></span>
+      </label>
+    </div>
+
+    <div class="popup__status" id="statusText">Active</div>
+
+    <!-- Quota -->
+    <div class="popup__section">
+      <div class="popup__section-label">Daily searches</div>
+      <div class="popup__quota-bar">
+        <div class="popup__quota-fill" id="quotaFill"></div>
+      </div>
+      <div class="popup__quota-text" id="quotaText">0 / 10 used</div>
+    </div>
+
+    <!-- Thresholds -->
+    <div class="popup__section">
+      <div class="popup__section-label">Freshness thresholds (months)</div>
+
+      <div class="popup__threshold">
+        <span class="popup__threshold-color" style="background:#22c55e"></span>
+        <span class="popup__threshold-label">Fresh</span>
+        <span class="popup__threshold-value" id="greenValue">6</span>
+        <input type="range" min="1" max="12" value="6" id="greenSlider" class="popup__slider popup__slider--green">
+      </div>
+
+      <div class="popup__threshold">
+        <span class="popup__threshold-color" style="background:#eab308"></span>
+        <span class="popup__threshold-label">Aging</span>
+        <span class="popup__threshold-value" id="yellowValue">18</span>
+        <input type="range" min="6" max="36" value="18" id="yellowSlider" class="popup__slider popup__slider--yellow">
+      </div>
+
+      <div class="popup__threshold">
+        <span class="popup__threshold-color" style="background:#f97316"></span>
+        <span class="popup__threshold-label">Old</span>
+        <span class="popup__threshold-value" id="orangeValue">36</span>
+        <input type="range" min="12" max="72" value="36" id="orangeSlider" class="popup__slider popup__slider--orange">
+      </div>
+    </div>
+
+    <!-- Badge settings -->
+    <div class="popup__section">
+      <div class="popup__section-label">Display</div>
+
+      <div class="popup__row">
+        <span>Badge on pages</span>
+        <label class="toggle toggle--small">
+          <input type="checkbox" id="showPagesCheckbox" checked>
+          <span class="toggle__slider"></span>
+        </label>
+      </div>
+
+      <div class="popup__row">
+        <span>Badges on Google</span>
+        <label class="toggle toggle--small">
+          <input type="checkbox" id="showSerpCheckbox" checked>
+          <span class="toggle__slider"></span>
+        </label>
+      </div>
+
+      <div class="popup__row">
+        <span>Badge position</span>
+        <select id="positionSelect" class="popup__select">
+          <option value="top-right">Top right</option>
+          <option value="top-left">Top left</option>
+          <option value="bottom-right">Bottom right</option>
+          <option value="bottom-left">Bottom left</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Upgrade (free tier) -->
+    <div class="popup__upgrade" id="upgradeSection">
+      <div class="popup__upgrade-title">Stale Pro</div>
+      <div class="popup__upgrade-desc">Unlimited SERP badges, filter old results, export reports.</div>
+      <button class="popup__upgrade-btn" id="upgradeBtn">Upgrade — $4.99</button>
+    </div>
+
+    <!-- Pro badge (paid) -->
+    <div class="popup__pro-badge" id="proSection" style="display:none">
+      <span class="popup__pro-icon">&#9733;</span> Stale Pro
+    </div>
+
+    <!-- Footer -->
+    <div class="popup__footer">
+      Stale v1.0.0 · <a href="https://stale-extension.com/privacy" target="_blank" rel="noopener" class="popup__footer-link">Privacy</a>
+    </div>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

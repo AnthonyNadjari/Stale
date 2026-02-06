@@ -1,0 +1,11 @@
+/*
+ * Stale — Badge overlay base styles
+ * Most styles live in the Shadow DOM (page-analyzer.js).
+ * This file ensures the host element doesn't interfere with page layout.
+ */
+#stale-badge-host {
+  all: initial !important;
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  pointer-events: auto !important;
+}

@@ -1,0 +1,82 @@
+{
+  "manifest_version": 3,
+  "name": "Stale",
+  "version": "1.0.0",
+  "description": "Instantly see how old any content on the web really is.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://www.google.com/search*",
+        "*://www.google.co.uk/search*",
+        "*://www.google.fr/search*",
+        "*://www.google.de/search*",
+        "*://www.google.es/search*",
+        "*://www.google.it/search*",
+        "*://www.google.ca/search*",
+        "*://www.google.com.au/search*",
+        "*://www.google.com.br/search*"
+      ],
+      "js": [
+        "src/shared/config.js",
+        "src/shared/date-utils.js",
+        "src/shared/freshness.js",
+        "src/shared/messaging.js",
+        "src/content/serp/serp-injector.js"
+      ],
+      "css": ["src/content/serp/serp-injector.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "exclude_matches": [
+        "*://www.google.com/search*",
+        "*://www.google.co.uk/search*",
+        "*://www.google.fr/search*",
+        "*://www.google.de/search*",
+        "*://www.google.es/search*",
+        "*://www.google.it/search*",
+        "*://www.google.ca/search*",
+        "*://www.google.com.au/search*",
+        "*://www.google.com.br/search*"
+      ],
+      "js": [
+        "src/shared/config.js",
+        "src/shared/date-utils.js",
+        "src/shared/freshness.js",
+        "src/shared/messaging.js",
+        "src/extractors/meta-extractor.js",
+        "src/extractors/jsonld-extractor.js",
+        "src/extractors/time-element-extractor.js",
+        "src/extractors/heuristic-extractor.js",
+        "src/extractors/index.js",
+        "src/content/page/page-analyzer.js"
+      ],
+      "css": ["src/content/page/badge-overlay.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "src/assets/icons/icon16.png",
+      "48": "src/assets/icons/icon48.png",
+      "128": "src/assets/icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "src/assets/icons/icon16.png",
+    "48": "src/assets/icons/icon48.png",
+    "128": "src/assets/icons/icon128.png"
+  }
+}
