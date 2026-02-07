@@ -158,7 +158,7 @@
     checkoutBtn.textContent = isRestoreMode ? 'Verifying...' : 'Loading...';
 
     if (isRestoreMode) {
-      // Restore: verify directly
+      // Restore: verify directly with the server
       const result = await sendMessage('VERIFY_LICENSE', { email });
 
       if (result && result.error) {
@@ -177,36 +177,22 @@
         checkoutBtn.textContent = 'Verify purchase';
       }
     } else {
-      // Upgrade: create Stripe Checkout session
-      const result = await sendMessage('CREATE_CHECKOUT', { email });
+      // Upgrade: save email, open Stripe Payment Link directly
+      await sendMessage('SET_LICENSE', {
+        license: { isPaid: false, purchaseDate: null, email }
+      });
 
-      if (result && result.error) {
-        checkoutError.textContent = result.error;
-        checkoutBtn.disabled = false;
-        checkoutBtn.textContent = 'Continue to payment';
-        return;
-      }
+      // Open Stripe Payment Link with email prefilled
+      const paymentLink = 'https://buy.stripe.com/14A4gydLk4PGgAcgEdaEE00'
+        + '?prefilled_email=' + encodeURIComponent(email);
+      chrome.tabs.create({ url: paymentLink });
 
-      if (result && result.url) {
-        // Store the email so we can verify later
-        await sendMessage('SET_LICENSE', {
-          license: { isPaid: false, purchaseDate: null, email }
-        });
+      // Show verifying state
+      checkoutSection.style.display = 'none';
+      verifyingSection.style.display = 'block';
 
-        // Open Stripe Checkout in a new tab
-        chrome.tabs.create({ url: result.url });
-
-        // Show verifying state — user will re-open popup after payment
-        checkoutSection.style.display = 'none';
-        verifyingSection.style.display = 'block';
-
-        // Start polling for payment completion
-        pollForPayment(email);
-      } else {
-        checkoutError.textContent = 'Unable to start checkout. Try again.';
-        checkoutBtn.disabled = false;
-        checkoutBtn.textContent = 'Continue to payment';
-      }
+      // Poll until payment completes
+      pollForPayment(email);
     }
   });
 

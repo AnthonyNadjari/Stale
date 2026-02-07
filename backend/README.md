@@ -1,60 +1,35 @@
-# Stale Pro — Backend Setup (5 minutes)
+# Stale Pro — Backend Setup
 
-## Why this backend exists
+This tiny server has **1 endpoint** that checks Stripe to verify if a user paid.
+Your Stripe secret key can't go in the extension (anyone could steal it), so this server keeps it safe.
 
-Stripe secret keys **cannot** go in a Chrome extension — anyone could extract
-them from the `.crx` file. This tiny server (3 endpoints) sits between
-your extension and Stripe.
+## Deploy (2 steps)
 
----
+### 1. Deploy to Vercel
 
-## Step 1 — Stripe Dashboard (2 min)
-
-1. Go to https://dashboard.stripe.com/products and click **+ Add product**
-2. Name: `Stale Pro` — Price: `$4.99` — One time
-3. Click **Save**. Copy the **Price ID** (starts with `price_`)
-4. Go to https://dashboard.stripe.com/apikeys — copy **Secret key** (`sk_live_...`)
-
-## Step 2 — Deploy to Vercel (1 min)
-
-1. Install Vercel CLI: `npm i -g vercel`
-2. From this folder:
-
-```
+```bash
 cd backend
+npm i -g vercel   # if you don't have it
 vercel
 ```
 
-3. Follow the prompts. Vercel gives you a URL like `https://stale-backend-xxx.vercel.app`
+Vercel gives you a URL like `https://stale-xxx.vercel.app`
 
-4. Set environment variables in Vercel Dashboard → Settings → Environment Variables:
+### 2. Set your Stripe secret key
 
-| Variable               | Value                          |
-|------------------------|--------------------------------|
-| `STRIPE_SECRET_KEY`    | `sk_live_...` from Step 1      |
-| `STRIPE_PRICE_ID`      | `price_...` from Step 1        |
-| `STRIPE_WEBHOOK_SECRET`| (set in Step 3 below)          |
-| `SUCCESS_URL`          | `https://stale-extension.com/success?session_id={CHECKOUT_SESSION_ID}` |
-| `CANCEL_URL`           | `https://stale-extension.com`  |
+In the Vercel dashboard → your project → **Settings** → **Environment Variables**:
 
-## Step 3 — Stripe Webhook (1 min)
+| Variable             | Value                                               |
+|----------------------|-----------------------------------------------------|
+| `STRIPE_SECRET_KEY`  | Your secret key from https://dashboard.stripe.com/apikeys |
 
-1. Go to https://dashboard.stripe.com/webhooks → **Add endpoint**
-2. URL: `https://YOUR-VERCEL-URL.vercel.app/api/webhook`
-3. Events: select `checkout.session.completed`
-4. Click **Add endpoint**. Copy the **Signing secret** (`whsec_...`)
-5. Paste it as `STRIPE_WEBHOOK_SECRET` in Vercel env vars (Step 2.4)
+Redeploy: `vercel --prod`
 
-## Step 4 — Update extension (30 sec)
+### 3. Paste your Vercel URL in the extension
 
-Replace the placeholder URL in **two files**:
+Replace `https://stale-api.example.com` with your Vercel URL in:
+- `stale/src/shared/config.js` (line 11)
+- `stale/src/background/service-worker.js` (line 8)
 
-- `stale/src/shared/config.js` line 11 → your Vercel URL
-- `stale/src/background/service-worker.js` line 8 → your Vercel URL
-
-Example: change `https://stale-api.example.com` to `https://stale-backend-xxx.vercel.app`
-
-## Done
-
-Rebuild and upload the extension to Chrome Web Store. When users pay,
-their license activates automatically.
+Done. The extension opens your Stripe Payment Link directly for checkout.
+The server only handles verification.

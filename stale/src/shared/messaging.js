@@ -52,10 +52,6 @@ window.Stale.Messaging = (() => {
     return send(MSG.SET_LICENSE, { license });
   }
 
-  function createCheckout(email) {
-    return send(MSG.CREATE_CHECKOUT, { email });
-  }
-
   function verifyLicense(email) {
     return send(MSG.VERIFY_LICENSE, { email });
   }
@@ -75,7 +71,7 @@ window.Stale.Messaging = (() => {
   return {
     send, getHttpDate, checkQuota, incrementQuota,
     getCache, setCache, getLicense, setLicense,
-    createCheckout, verifyLicense,
+    verifyLicense,
     getPreferences, setPreferences, toggleEnabled
   };
 

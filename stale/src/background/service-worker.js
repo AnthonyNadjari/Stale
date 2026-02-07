@@ -15,7 +15,6 @@ const MSG = {
   SET_CACHE:       'SET_CACHE',
   GET_LICENSE:     'GET_LICENSE',
   SET_LICENSE:     'SET_LICENSE',
-  CREATE_CHECKOUT: 'CREATE_CHECKOUT',
   VERIFY_LICENSE:  'VERIFY_LICENSE',
   GET_PREFERENCES: 'GET_PREFERENCES',
   SET_PREFERENCES: 'SET_PREFERENCES',
@@ -177,10 +176,6 @@ async function handleMessage(msg) {
       return { ok: true };
     }
 
-    case MSG.CREATE_CHECKOUT: {
-      return await createCheckoutSession(msg.email);
-    }
-
     case MSG.VERIFY_LICENSE: {
       return await verifyLicenseWithServer(msg.email);
     }
@@ -208,28 +203,6 @@ async function handleMessage(msg) {
 
     default:
       return { error: 'Unknown message type' };
-  }
-}
-
-// ── Stripe Checkout ─────────────────────────────────────
-
-async function createCheckoutSession(email) {
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/create-checkout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return { error: err.error || 'Server error' };
-    }
-
-    const data = await res.json();
-    return { url: data.url };
-  } catch (err) {
-    return { error: 'Network error — check your connection' };
   }
 }
 
