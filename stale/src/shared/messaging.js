@@ -48,6 +48,18 @@ window.Stale.Messaging = (() => {
     return send(MSG.GET_LICENSE);
   }
 
+  function setLicense(license) {
+    return send(MSG.SET_LICENSE, { license });
+  }
+
+  function createCheckout(email) {
+    return send(MSG.CREATE_CHECKOUT, { email });
+  }
+
+  function verifyLicense(email) {
+    return send(MSG.VERIFY_LICENSE, { email });
+  }
+
   function getPreferences() {
     return send(MSG.GET_PREFERENCES);
   }
@@ -62,7 +74,8 @@ window.Stale.Messaging = (() => {
 
   return {
     send, getHttpDate, checkQuota, incrementQuota,
-    getCache, setCache, getLicense,
+    getCache, setCache, getLicense, setLicense,
+    createCheckout, verifyLicense,
     getPreferences, setPreferences, toggleEnabled
   };
 

@@ -5,6 +5,11 @@
 window.Stale = window.Stale || {};
 
 window.Stale.CONFIG = {
+  // ── License server URL ────────────────────────────────
+  // After deploying the backend, replace this with your server URL.
+  // e.g. 'https://stale-api.yourhost.com'
+  API_BASE_URL: 'https://stale-api.example.com',
+
   // Freshness thresholds in months
   THRESHOLDS: {
     green: 6,
@@ -50,6 +55,9 @@ window.Stale.CONFIG = {
     GET_CACHE:        'GET_CACHE',
     SET_CACHE:        'SET_CACHE',
     GET_LICENSE:      'GET_LICENSE',
+    SET_LICENSE:      'SET_LICENSE',
+    CREATE_CHECKOUT:  'CREATE_CHECKOUT',
+    VERIFY_LICENSE:   'VERIFY_LICENSE',
     GET_PREFERENCES:  'GET_PREFERENCES',
     SET_PREFERENCES:  'SET_PREFERENCES',
     TOGGLE_ENABLED:   'TOGGLE_ENABLED'

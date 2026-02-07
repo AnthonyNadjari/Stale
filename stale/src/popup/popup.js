@@ -1,27 +1,39 @@
 /**
  * Stale — Popup controller
- * Loads preferences from storage and saves changes in real-time.
+ * Loads preferences from storage, handles Stripe checkout, and saves changes in real-time.
  */
 (async () => {
 
   // ── Elements ────────────────────────────────────────
 
-  const enabledCheckbox  = document.getElementById('enabledCheckbox');
-  const statusText       = document.getElementById('statusText');
-  const quotaFill        = document.getElementById('quotaFill');
-  const quotaText        = document.getElementById('quotaText');
-  const greenSlider      = document.getElementById('greenSlider');
-  const yellowSlider     = document.getElementById('yellowSlider');
-  const orangeSlider     = document.getElementById('orangeSlider');
-  const greenValue       = document.getElementById('greenValue');
-  const yellowValue      = document.getElementById('yellowValue');
-  const orangeValue      = document.getElementById('orangeValue');
+  const enabledCheckbox   = document.getElementById('enabledCheckbox');
+  const statusText        = document.getElementById('statusText');
+  const quotaFill         = document.getElementById('quotaFill');
+  const quotaText         = document.getElementById('quotaText');
+  const greenSlider       = document.getElementById('greenSlider');
+  const yellowSlider      = document.getElementById('yellowSlider');
+  const orangeSlider      = document.getElementById('orangeSlider');
+  const greenValue        = document.getElementById('greenValue');
+  const yellowValue       = document.getElementById('yellowValue');
+  const orangeValue       = document.getElementById('orangeValue');
   const showPagesCheckbox = document.getElementById('showPagesCheckbox');
   const showSerpCheckbox  = document.getElementById('showSerpCheckbox');
   const positionSelect    = document.getElementById('positionSelect');
   const upgradeSection    = document.getElementById('upgradeSection');
-  const proSection        = document.getElementById('proSection');
   const upgradeBtn        = document.getElementById('upgradeBtn');
+  const restoreLink       = document.getElementById('restoreLink');
+  const checkoutSection   = document.getElementById('checkoutSection');
+  const checkoutTitle     = document.getElementById('checkoutTitle');
+  const checkoutSubtitle  = document.getElementById('checkoutSubtitle');
+  const checkoutEmail     = document.getElementById('checkoutEmail');
+  const checkoutError     = document.getElementById('checkoutError');
+  const checkoutBtn       = document.getElementById('checkoutBtn');
+  const checkoutBack      = document.getElementById('checkoutBack');
+  const verifyingSection  = document.getElementById('verifyingSection');
+  const proSection        = document.getElementById('proSection');
+
+  // Track whether we're in "restore" or "upgrade" mode
+  let isRestoreMode = false;
 
   // ── Load state ──────────────────────────────────────
 
@@ -56,13 +68,16 @@
   showSerpCheckbox.checked  = prefs.showBadgeOnSerp !== false;
   positionSelect.value      = prefs.badgePosition || 'top-right';
 
-  // License
+  // License — if already paid, show Pro badge
   if (license.isPaid) {
-    upgradeSection.style.display = 'none';
-    proSection.style.display = 'flex';
+    showProState();
+  } else if (license.email) {
+    // User started checkout before but may not have completed it.
+    // Auto-verify in background to check if payment went through.
+    autoVerify(license.email);
   }
 
-  // ── Event listeners ─────────────────────────────────
+  // ── Event listeners: Preferences ────────────────────
 
   enabledCheckbox.addEventListener('change', () => {
     updateStatus();
@@ -92,9 +107,112 @@
     savePrefs({ badgePosition: positionSelect.value });
   });
 
+  // ── Event listeners: Upgrade flow ───────────────────
+
+  // Step 1 → Step 2 (upgrade)
   upgradeBtn.addEventListener('click', () => {
-    // Placeholder: in production, this would open Stripe Checkout or CWS payment
-    chrome.tabs.create({ url: 'https://example.com/stale-pro' });
+    isRestoreMode = false;
+    checkoutTitle.textContent = 'Enter your email';
+    checkoutSubtitle.textContent = "We'll send your receipt here";
+    checkoutBtn.textContent = 'Continue to payment';
+    checkoutError.textContent = '';
+    checkoutEmail.value = '';
+    upgradeSection.style.display = 'none';
+    checkoutSection.style.display = 'block';
+    checkoutEmail.focus();
+  });
+
+  // Step 1 → Step 2 (restore)
+  restoreLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    isRestoreMode = true;
+    checkoutTitle.textContent = 'Restore your purchase';
+    checkoutSubtitle.textContent = 'Enter the email you used to pay';
+    checkoutBtn.textContent = 'Verify purchase';
+    checkoutError.textContent = '';
+    checkoutEmail.value = '';
+    upgradeSection.style.display = 'none';
+    checkoutSection.style.display = 'block';
+    checkoutEmail.focus();
+  });
+
+  // Step 2: Back → Step 1
+  checkoutBack.addEventListener('click', (e) => {
+    e.preventDefault();
+    checkoutSection.style.display = 'none';
+    upgradeSection.style.display = 'block';
+  });
+
+  // Step 2: Submit email
+  checkoutBtn.addEventListener('click', async () => {
+    const email = checkoutEmail.value.trim();
+    checkoutError.textContent = '';
+
+    if (!email || !email.includes('@') || !email.includes('.')) {
+      checkoutError.textContent = 'Please enter a valid email address.';
+      return;
+    }
+
+    // Disable button during request
+    checkoutBtn.disabled = true;
+    checkoutBtn.textContent = isRestoreMode ? 'Verifying...' : 'Loading...';
+
+    if (isRestoreMode) {
+      // Restore: verify directly
+      const result = await sendMessage('VERIFY_LICENSE', { email });
+
+      if (result && result.error) {
+        checkoutError.textContent = result.error;
+        checkoutBtn.disabled = false;
+        checkoutBtn.textContent = 'Verify purchase';
+        return;
+      }
+
+      if (result && result.isPaid) {
+        showProState();
+        updateQuota(quota, result);
+      } else {
+        checkoutError.textContent = 'No purchase found for this email.';
+        checkoutBtn.disabled = false;
+        checkoutBtn.textContent = 'Verify purchase';
+      }
+    } else {
+      // Upgrade: create Stripe Checkout session
+      const result = await sendMessage('CREATE_CHECKOUT', { email });
+
+      if (result && result.error) {
+        checkoutError.textContent = result.error;
+        checkoutBtn.disabled = false;
+        checkoutBtn.textContent = 'Continue to payment';
+        return;
+      }
+
+      if (result && result.url) {
+        // Store the email so we can verify later
+        await sendMessage('SET_LICENSE', {
+          license: { isPaid: false, purchaseDate: null, email }
+        });
+
+        // Open Stripe Checkout in a new tab
+        chrome.tabs.create({ url: result.url });
+
+        // Show verifying state — user will re-open popup after payment
+        checkoutSection.style.display = 'none';
+        verifyingSection.style.display = 'block';
+
+        // Start polling for payment completion
+        pollForPayment(email);
+      } else {
+        checkoutError.textContent = 'Unable to start checkout. Try again.';
+        checkoutBtn.disabled = false;
+        checkoutBtn.textContent = 'Continue to payment';
+      }
+    }
+  });
+
+  // Allow Enter key to submit
+  checkoutEmail.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') checkoutBtn.click();
   });
 
   document.querySelector('.popup__footer-link')?.addEventListener('click', (e) => {
@@ -102,7 +220,49 @@
     chrome.tabs.create({ url: 'https://stale-extension.com/privacy' });
   });
 
-  // ── Helpers ─────────────────────────────────────────
+  // ── Auto-verify (background check on popup open) ────
+
+  async function autoVerify(email) {
+    const result = await sendMessage('VERIFY_LICENSE', { email });
+    if (result && result.isPaid) {
+      showProState();
+      updateQuota(quota, result);
+    }
+  }
+
+  // ── Poll for payment completion ─────────────────────
+
+  async function pollForPayment(email) {
+    // Poll every 3 seconds for up to 5 minutes
+    const maxAttempts = 100;
+    let attempts = 0;
+
+    const interval = setInterval(async () => {
+      attempts++;
+      if (attempts > maxAttempts) {
+        clearInterval(interval);
+        verifyingSection.style.display = 'none';
+        upgradeSection.style.display = 'block';
+        return;
+      }
+
+      const result = await sendMessage('VERIFY_LICENSE', { email });
+      if (result && result.isPaid) {
+        clearInterval(interval);
+        showProState();
+        updateQuota(quota, result);
+      }
+    }, 3000);
+  }
+
+  // ── UI Helpers ──────────────────────────────────────
+
+  function showProState() {
+    upgradeSection.style.display = 'none';
+    checkoutSection.style.display = 'none';
+    verifyingSection.style.display = 'none';
+    proSection.style.display = 'flex';
+  }
 
   function updateStatus() {
     statusText.textContent = enabledCheckbox.checked ? 'Active' : 'Paused';

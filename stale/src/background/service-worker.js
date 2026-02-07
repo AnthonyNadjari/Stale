@@ -1,7 +1,11 @@
 /**
  * Stale — Service Worker
- * Orchestrates caching, quotas, HTTP header capture, and messaging.
+ * Orchestrates caching, quotas, HTTP header capture, licensing, and messaging.
  */
+
+// ── License server URL ──────────────────────────────────
+// After deploying the backend, replace this with your server URL.
+const API_BASE_URL = 'https://stale-api.example.com';
 
 const MSG = {
   GET_HTTP_DATE:   'GET_HTTP_DATE',
@@ -10,6 +14,9 @@ const MSG = {
   GET_CACHE:       'GET_CACHE',
   SET_CACHE:       'SET_CACHE',
   GET_LICENSE:     'GET_LICENSE',
+  SET_LICENSE:     'SET_LICENSE',
+  CREATE_CHECKOUT: 'CREATE_CHECKOUT',
+  VERIFY_LICENSE:  'VERIFY_LICENSE',
   GET_PREFERENCES: 'GET_PREFERENCES',
   SET_PREFERENCES: 'SET_PREFERENCES',
   TOGGLE_ENABLED:  'TOGGLE_ENABLED'
@@ -24,7 +31,8 @@ const DEFAULTS = {
   },
   license: {
     isPaid: false,
-    purchaseDate: null
+    purchaseDate: null,
+    email: null
   },
   preferences: {
     enabled: true,
@@ -52,9 +60,15 @@ chrome.alarms.create('cache-cleanup', {
   periodInMinutes: 6 * 60 // every 6h
 });
 
+chrome.alarms.create('license-revalidation', {
+  delayInMinutes: 5,
+  periodInMinutes: 24 * 60 // every 24h
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'quota-reset') resetQuota();
   if (alarm.name === 'cache-cleanup') cleanupCache();
+  if (alarm.name === 'license-revalidation') revalidateLicense();
 });
 
 // ── HTTP Header Capture ─────────────────────────────────
@@ -153,6 +167,24 @@ async function handleMessage(msg) {
       return data.license || DEFAULTS.license;
     }
 
+    case MSG.SET_LICENSE: {
+      const license = {
+        isPaid: !!msg.license.isPaid,
+        purchaseDate: msg.license.purchaseDate || null,
+        email: msg.license.email || null
+      };
+      await setStorage({ license });
+      return { ok: true };
+    }
+
+    case MSG.CREATE_CHECKOUT: {
+      return await createCheckoutSession(msg.email);
+    }
+
+    case MSG.VERIFY_LICENSE: {
+      return await verifyLicenseWithServer(msg.email);
+    }
+
     case MSG.GET_PREFERENCES: {
       const data = await getStorage(['preferences']);
       return data.preferences || DEFAULTS.preferences;
@@ -176,6 +208,91 @@ async function handleMessage(msg) {
 
     default:
       return { error: 'Unknown message type' };
+  }
+}
+
+// ── Stripe Checkout ─────────────────────────────────────
+
+async function createCheckoutSession(email) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/create-checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { error: err.error || 'Server error' };
+    }
+
+    const data = await res.json();
+    return { url: data.url };
+  } catch (err) {
+    return { error: 'Network error — check your connection' };
+  }
+}
+
+// ── License Verification ────────────────────────────────
+
+async function verifyLicenseWithServer(email) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/verify-license`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    if (!res.ok) {
+      return { error: 'Verification server error' };
+    }
+
+    const result = await res.json();
+
+    // Update local license storage
+    const license = {
+      isPaid: !!result.isPaid,
+      purchaseDate: result.purchaseDate || null,
+      email: email
+    };
+    await setStorage({ license });
+
+    return license;
+  } catch (err) {
+    return { error: 'Network error — check your connection' };
+  }
+}
+
+// ── Periodic License Revalidation ───────────────────────
+
+async function revalidateLicense() {
+  const data = await getStorage(['license']);
+  const license = data.license || DEFAULTS.license;
+
+  // Only revalidate if there is an email stored (user attempted purchase or has Pro)
+  if (!license.email) return;
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/verify-license`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: license.email })
+    });
+
+    if (!res.ok) return; // Keep current state on server error
+
+    const result = await res.json();
+
+    // Update license — handles both activation and revocation (refunds)
+    await setStorage({
+      license: {
+        isPaid: !!result.isPaid,
+        purchaseDate: result.purchaseDate || null,
+        email: license.email
+      }
+    });
+  } catch {
+    // Network error — keep current license state
   }
 }
 
