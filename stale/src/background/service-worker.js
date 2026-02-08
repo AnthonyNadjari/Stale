@@ -33,7 +33,7 @@ const DEFAULTS = {
   cache: {},
   quota: {
     serpAugmentations: 0,
-    dailyLimit: 10,
+    dailyLimit: 50,
     resetDate: todayString()
   },
   license: {
@@ -424,13 +424,21 @@ async function cleanupCache() {
 // ── Install / Init ──────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(async (details) => {
-  if (details.reason === 'install') {
-    const data = await getStorage(['preferences', 'quota', 'license']);
-    if (!data.preferences) await setStorage({ preferences: DEFAULTS.preferences });
-    if (!data.quota) await setStorage({ quota: DEFAULTS.quota });
-    if (!data.license) await setStorage({ license: DEFAULTS.license });
-    if (!data.cache) await setStorage({ cache: {} });
+  const data = await getStorage(['preferences', 'quota', 'license']);
+  if (!data.preferences) await setStorage({ preferences: DEFAULTS.preferences });
+  if (!data.license) await setStorage({ license: DEFAULTS.license });
+  if (!data.cache) await setStorage({ cache: {} });
+
+  // Always reset/update quota on install or update to pick up new dailyLimit
+  const quota = data.quota || DEFAULTS.quota;
+  quota.dailyLimit = DEFAULTS.quota.dailyLimit;
+  // On fresh install or update, reset the counter
+  if (details.reason === 'install' || quota.resetDate !== todayString()) {
+    quota.serpAugmentations = 0;
+    quota.resetDate = todayString();
   }
+  await setStorage({ quota });
+
   setupPageAnalyzerAndWebRequest().catch(() => {});
 });
 

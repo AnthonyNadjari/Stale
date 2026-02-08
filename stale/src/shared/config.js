@@ -21,7 +21,7 @@ window.Stale.CONFIG = {
   },
 
   // Free tier daily SERP augmentation limit
-  FREE_DAILY_LIMIT: 10,
+  FREE_DAILY_LIMIT: 50,
 
   // Cache TTL: 24 hours
   CACHE_TTL: 24 * 60 * 60 * 1000,

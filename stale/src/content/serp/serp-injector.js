@@ -68,35 +68,39 @@
   // ── Core: process all visible results ───────────────
 
   async function processResults() {
-    // Multiple defensive selectors for Google result containers
     const results = getOrganicResults();
 
     for (const result of results) {
       if (result.dataset.staleProcessed) continue;
       result.dataset.staleProcessed = 'true';
 
+      // Find the link URL — try multiple selectors
       const link = result.querySelector('a[href]');
       if (!link) continue;
 
       const url = link.href;
       if (!url || url.startsWith('javascript:') || url.startsWith('#')) continue;
 
-      // Try cache first
       let dateInfo = null;
-      const cached = await Messaging.getCache(url);
 
-      if (cached?.entry) {
-        dateInfo = {
-          published:  cached.entry.published ? new Date(cached.entry.published) : null,
-          modified:   cached.entry.modified ? new Date(cached.entry.modified) : null,
-          confidence: cached.entry.confidence,
-          source:     cached.entry.source
-        };
-      }
+      // Try to extract date from the snippet FIRST (instant, no SW needed)
+      dateInfo = extractDateFromSnippet(result);
 
-      // If not cached, extract from the snippet text
+      // If no snippet date, try cache (may be slow if SW is waking up)
       if (!dateInfo) {
-        dateInfo = extractDateFromSnippet(result);
+        try {
+          const cached = await Messaging.getCache(url);
+          if (cached?.entry) {
+            dateInfo = {
+              published:  cached.entry.published ? new Date(cached.entry.published) : null,
+              modified:   cached.entry.modified ? new Date(cached.entry.modified) : null,
+              confidence: cached.entry.confidence,
+              source:     cached.entry.source
+            };
+          }
+        } catch {
+          // SW unavailable — skip cache
+        }
       }
 
       // Compute freshness
@@ -113,12 +117,14 @@
    * Get organic search result containers using multiple defensive selectors.
    */
   function getOrganicResults() {
-    // Primary: div.g is the classic Google result container
     const selectors = [
+      '#rso .g',
+      '#rso > div > div.g',
       '#search .g:not(.stale-limit-banner)',
       '#search [data-sokoban-container]',
-      '#rso .g',
-      '#rso > div > div.g'
+      '#rso div[data-hveid][lang]',
+      '#rso div.dURPMd',
+      '#rso div.N54PNb'
     ];
 
     const seen = new Set();
@@ -128,7 +134,11 @@
       try {
         const elements = document.querySelectorAll(selector);
         for (const el of elements) {
-          if (!seen.has(el) && el.querySelector('a[href] h3')) {
+          if (seen.has(el)) continue;
+          // Accept the element if it has any title heading (h3)
+          // Google uses both <a><h3> and <h3><a> patterns
+          const hasTitle = el.querySelector('h3');
+          if (hasTitle) {
             seen.add(el);
             results.push(el);
           }
@@ -139,6 +149,19 @@
     }
 
     return results;
+  }
+
+  /**
+   * Find the title element (h3) inside a result, regardless of DOM nesting.
+   * Google uses both <a href><h3>title</h3></a> and <h3><a href>title</a></h3>
+   */
+  function findTitleElement(resultEl) {
+    // Try both patterns
+    return resultEl.querySelector('a[href] h3')       // <a><h3>
+        || resultEl.querySelector('h3 a[href]')       // <h3><a>
+        || resultEl.querySelector('h3.LC20lb')        // Google's named class
+        || resultEl.querySelector('h3[class]')        // Any h3 with a class
+        || resultEl.querySelector('h3');              // Bare h3
   }
 
   // ── Month name patterns (English + French for Google.fr) ──
@@ -269,11 +292,11 @@
    * Inject the freshness badge next to the result title.
    */
   function injectBadge(resultEl, freshness, dateInfo) {
-    const titleLink = resultEl.querySelector('a[href] h3');
-    if (!titleLink) return;
-
     // Avoid double-injection
     if (resultEl.querySelector('[data-stale-badge]')) return;
+
+    const titleEl = findTitleElement(resultEl);
+    if (!titleEl) return;
 
     const badge = document.createElement('span');
     badge.className = `stale-serp-badge stale-serp-badge--${freshness.colorName}`;
@@ -308,8 +331,12 @@
     tooltip.innerHTML = tooltipHTML;
     badge.appendChild(tooltip);
 
-    // Insert after the h3 title
-    titleLink.parentElement.insertBefore(badge, titleLink.nextSibling);
+    // Insert the badge after the title element
+    // Handle both <a><h3> and <h3><a> structures
+    const h3 = titleEl.tagName === 'H3' ? titleEl : titleEl.closest('h3') || titleEl;
+    if (h3.parentElement) {
+      h3.parentElement.insertBefore(badge, h3.nextSibling);
+    }
   }
 
   /**
