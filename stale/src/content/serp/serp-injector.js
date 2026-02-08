@@ -302,12 +302,30 @@
     const titleEl = findTitleElement(resultEl);
     if (!titleEl) return;
 
+    // Build badge: ● Label · age (matching promo style)
     const badge = document.createElement('span');
     badge.className = `stale-serp-badge stale-serp-badge--${freshness.colorName}`;
-    badge.textContent = freshness.shortAge;
     badge.setAttribute('data-stale-badge', 'true');
 
-    // Tooltip
+    // Colored dot
+    const dot = document.createElement('span');
+    dot.className = 'stale-serp-badge__dot';
+
+    // Label text (Fresh, Aging, Old, Stale, Unknown)
+    const label = document.createElement('span');
+    label.className = 'stale-serp-badge__label';
+    label.textContent = freshness.label;
+
+    // Age text
+    const age = document.createElement('span');
+    age.className = 'stale-serp-badge__age';
+    age.textContent = `\u00b7 ${freshness.ageText}`;
+
+    badge.appendChild(dot);
+    badge.appendChild(label);
+    badge.appendChild(age);
+
+    // Tooltip (shows on hover with more details)
     const tooltip = document.createElement('div');
     tooltip.className = 'stale-serp-tooltip';
 
@@ -336,7 +354,6 @@
     badge.appendChild(tooltip);
 
     // Insert the badge after the title element
-    // Handle both <a><h3> and <h3><a> structures
     const h3 = titleEl.tagName === 'H3' ? titleEl : titleEl.closest('h3') || titleEl;
     if (h3.parentElement) {
       h3.parentElement.insertBefore(badge, h3.nextSibling);

@@ -1,6 +1,6 @@
 /*
  * Stale — SERP badge styles
- * Prefixed with stale-serp- to avoid conflicts with Google's styles.
+ * Matches the promo style: ● Label · age
  */
 
 /* ── Badge pill ──────────────────────────────────── */
@@ -8,21 +8,21 @@
 .stale-serp-badge {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
   position: relative;
-  margin-left: 8px;
-  padding: 2px 7px;
-  border-radius: 9999px;
+  margin-left: 10px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 6px;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   line-height: 1.4;
-  letter-spacing: 0.01em;
   vertical-align: middle;
   cursor: default;
   transition: opacity 0.15s ease;
   opacity: 0;
   animation: stale-fadein 0.3s ease forwards;
+  white-space: nowrap;
 }
 
 @keyframes stale-fadein {
@@ -30,30 +30,61 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Color dot inside badge ─────────────────────── */
+
+.stale-serp-badge__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.stale-serp-badge__label {
+  font-weight: 600;
+}
+
+.stale-serp-badge__age {
+  color: inherit;
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+/* ── Color variants ─────────────────────────────── */
+
 .stale-serp-badge--green {
-  background: rgba(34, 197, 94, 0.12);
+  background: rgba(34, 197, 94, 0.08);
+  border: 1.5px solid rgba(34, 197, 94, 0.35);
   color: #16a34a;
 }
+.stale-serp-badge--green .stale-serp-badge__dot { background: #22c55e; }
 
 .stale-serp-badge--yellow {
-  background: rgba(234, 179, 8, 0.12);
-  color: #ca8a04;
+  background: rgba(234, 179, 8, 0.08);
+  border: 1.5px solid rgba(234, 179, 8, 0.35);
+  color: #a16207;
 }
+.stale-serp-badge--yellow .stale-serp-badge__dot { background: #eab308; }
 
 .stale-serp-badge--orange {
-  background: rgba(249, 115, 22, 0.12);
-  color: #ea580c;
+  background: rgba(249, 115, 22, 0.08);
+  border: 1.5px solid rgba(249, 115, 22, 0.35);
+  color: #c2410c;
 }
+.stale-serp-badge--orange .stale-serp-badge__dot { background: #f97316; }
 
 .stale-serp-badge--red {
-  background: rgba(239, 68, 68, 0.12);
+  background: rgba(239, 68, 68, 0.08);
+  border: 1.5px solid rgba(239, 68, 68, 0.35);
   color: #dc2626;
 }
+.stale-serp-badge--red .stale-serp-badge__dot { background: #ef4444; }
 
 .stale-serp-badge--grey {
-  background: rgba(107, 114, 128, 0.10);
+  background: rgba(107, 114, 128, 0.06);
+  border: 1.5px solid rgba(107, 114, 128, 0.25);
   color: #6b7280;
 }
+.stale-serp-badge--grey .stale-serp-badge__dot { background: #6b7280; }
 
 /* ── Tooltip ─────────────────────────────────────── */
 
@@ -67,7 +98,7 @@
   color: #d4d4d4;
   border-radius: 8px;
   padding: 10px 14px;
-  width: 210px;
+  width: 220px;
   z-index: 999999;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   font-size: 12px;
