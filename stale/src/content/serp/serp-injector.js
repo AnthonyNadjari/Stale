@@ -46,6 +46,8 @@
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === 1 && (
+          node.matches?.('.MjjYud') ||
+          node.querySelector?.('.MjjYud') ||
           node.matches?.('.g') ||
           node.querySelector?.('.g') ||
           node.matches?.('[data-sokoban-container]') ||
@@ -117,13 +119,15 @@
    * Get organic search result containers using multiple defensive selectors.
    */
   function getOrganicResults() {
+    // Google 2025-2026: .g is gone, results now use .MjjYud as outer wrapper
+    // and .yuRUbf for the title area. Keep .g as fallback for older layouts.
     const selectors = [
+      '#rso > .MjjYud',
+      '#rso .MjjYud',
       '#rso .g',
-      '#rso > div > div.g',
       '#search .g:not(.stale-limit-banner)',
       '#search [data-sokoban-container]',
       '#rso div[data-hveid][lang]',
-      '#rso div.dURPMd',
       '#rso div.N54PNb'
     ];
 
