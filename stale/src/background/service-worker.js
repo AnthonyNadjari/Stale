@@ -91,6 +91,7 @@ function onHeadersReceived(details) {
 }
 
 let webRequestListenerActive = false;
+let pageAnalyzerSetupPromise = null;
 
 async function setupPageAnalyzerAndWebRequest() {
   const hasAllUrls = await new Promise(r =>
@@ -111,25 +112,39 @@ async function setupPageAnalyzerAndWebRequest() {
     webRequestListenerActive = true;
   }
 
-  try {
-    const existing = await chrome.scripting.getRegisteredContentScripts();
-    if (existing.some(s => s.id === PAGE_ANALYZER_SCRIPT_ID)) {
+  if (pageAnalyzerSetupPromise) return pageAnalyzerSetupPromise;
+  pageAnalyzerSetupPromise = (async () => {
+    try {
       await chrome.scripting.unregisterContentScripts({ ids: [PAGE_ANALYZER_SCRIPT_ID] });
-    }
-  } catch (_) {}
+    } catch (_) {}
 
-  await chrome.scripting.registerContentScripts([{
-    id: PAGE_ANALYZER_SCRIPT_ID,
-    matches: ['<all_urls>'],
-    excludeMatches: GOOGLE_SERP_PATTERNS,
-    js: [
-      'src/shared/config.js', 'src/shared/date-utils.js', 'src/shared/freshness.js', 'src/shared/messaging.js',
-      'src/extractors/meta-extractor.js', 'src/extractors/jsonld-extractor.js', 'src/extractors/time-element-extractor.js',
-      'src/extractors/heuristic-extractor.js', 'src/extractors/index.js', 'src/content/page/page-analyzer.js'
-    ],
-    css: ['src/content/page/badge-overlay.css'],
-    runAt: 'document_idle'
-  }]);
+    const scriptConfig = {
+      id: PAGE_ANALYZER_SCRIPT_ID,
+      matches: ['<all_urls>'],
+      excludeMatches: GOOGLE_SERP_PATTERNS,
+      js: [
+        'src/shared/config.js', 'src/shared/date-utils.js', 'src/shared/freshness.js', 'src/shared/messaging.js',
+        'src/extractors/meta-extractor.js', 'src/extractors/jsonld-extractor.js', 'src/extractors/time-element-extractor.js',
+        'src/extractors/heuristic-extractor.js', 'src/extractors/index.js', 'src/content/page/page-analyzer.js'
+      ],
+      css: ['src/content/page/badge-overlay.css'],
+      runAt: 'document_idle'
+    };
+
+    try {
+      await chrome.scripting.registerContentScripts([scriptConfig]);
+    } catch (err) {
+      if (err?.message?.includes('Duplicate')) {
+        try {
+          await chrome.scripting.unregisterContentScripts({ ids: [PAGE_ANALYZER_SCRIPT_ID] });
+          await chrome.scripting.registerContentScripts([scriptConfig]);
+        } catch (_) {}
+      }
+    } finally {
+      pageAnalyzerSetupPromise = null;
+    }
+  })();
+  return pageAnalyzerSetupPromise;
 }
 
 async function unregisterPageAnalyzer() {
@@ -380,17 +395,17 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     if (!data.license) await setStorage({ license: DEFAULTS.license });
     if (!data.cache) await setStorage({ cache: {} });
   }
-  await setupPageAnalyzerAndWebRequest();
+  setupPageAnalyzerAndWebRequest().catch(() => {});
 });
 
 chrome.permissions.onAdded.addListener((permissions) => {
   if (permissions.origins && permissions.origins.includes('<all_urls>')) {
-    setupPageAnalyzerAndWebRequest();
+    setupPageAnalyzerAndWebRequest().catch(() => {});
   }
 });
 
 // On service worker startup, register page script if permission + prefs allow
-setupPageAnalyzerAndWebRequest();
+setupPageAnalyzerAndWebRequest().catch(() => {});
 
 // ── Helpers ─────────────────────────────────────────────
 
