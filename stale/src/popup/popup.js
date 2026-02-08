@@ -68,17 +68,15 @@
   showSerpCheckbox.checked  = prefs.showBadgeOnSerp !== false;
   positionSelect.value      = prefs.badgePosition || 'top-right';
 
-  // If "Badge on pages" is on but optional permission not yet granted, request it once
+  // If "Badge on pages" is on but optional permission not yet granted,
+  // just uncheck — user will be prompted when they toggle it on (user gesture required)
   if (showPagesCheckbox.checked) {
     const hasAllUrls = await new Promise(r =>
       chrome.permissions.contains({ origins: ['<all_urls>'] }, r)
     );
     if (!hasAllUrls) {
-      const granted = await new Promise(r =>
-        chrome.permissions.request({ origins: ['<all_urls>'] }, r)
-      );
-      if (!granted) showPagesCheckbox.checked = false;
-      else savePrefs({ showBadgeOnPages: true });
+      showPagesCheckbox.checked = false;
+      savePrefs({ showBadgeOnPages: false });
     }
   }
 
