@@ -8,7 +8,7 @@ window.Stale.CONFIG = {
   // ── License server URL ────────────────────────────────
   // After deploying the backend, replace this with your server URL.
   // e.g. 'https://stale-xxx.vercel.app'
-  API_BASE_URL: 'https://stale-api.example.com',
+  API_BASE_URL: 'https://backend-iota-one-85.vercel.app',
 
   // ── Stripe Payment Link ───────────────────────────────
   STRIPE_PAYMENT_LINK: 'https://buy.stripe.com/14A4gydLk4PGgAcgEdaEE00',

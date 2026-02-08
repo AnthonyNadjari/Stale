@@ -5,7 +5,7 @@
 
 // ── License server URL ──────────────────────────────────
 // After deploying the backend, replace this with your server URL.
-const API_BASE_URL = 'https://stale-api.example.com';
+const API_BASE_URL = 'https://backend-iota-one-85.vercel.app';
 
 const MSG = {
   GET_HTTP_DATE:        'GET_HTTP_DATE',

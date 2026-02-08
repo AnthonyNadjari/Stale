@@ -258,7 +258,7 @@
     if (upgradeLink) {
       upgradeLink.addEventListener('click', (e) => {
         e.preventDefault();
-        const url = (CONFIG && CONFIG.CHECKOUT_URL) || 'https://buy.stripe.com/14A4gydLk4PGgAcgEdaEE00';
+        const url = (CONFIG && CONFIG.STRIPE_PAYMENT_LINK) || 'https://buy.stripe.com/14A4gydLk4PGgAcgEdaEE00';
         window.open(url, '_blank', 'noopener');
       });
     }
