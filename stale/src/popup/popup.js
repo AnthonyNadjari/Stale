@@ -321,14 +321,15 @@
   }
 
   async function sendMessage(type, data = {}) {
-    // Retry once if the service worker is not yet active (cold start)
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // Retry on failure — the SW may be waking up from idle (cold start)
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const response = await chrome.runtime.sendMessage({ type, ...data });
         return response;
       } catch (err) {
-        if (attempt === 0 && err?.message?.includes('SW')) {
-          await new Promise(r => setTimeout(r, 300));
+        if (attempt < 2) {
+          // Wait progressively longer before retrying
+          await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
           continue;
         }
         return null;

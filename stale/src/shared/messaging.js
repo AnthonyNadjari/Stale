@@ -1,5 +1,6 @@
 /**
  * Stale — Messaging wrapper for chrome.runtime communication
+ * Includes retry logic for service worker cold-start delays.
  */
 window.Stale = window.Stale || {};
 
@@ -7,19 +8,35 @@ window.Stale.Messaging = (() => {
 
   const { MSG } = window.Stale.CONFIG;
 
+  /**
+   * Send a message to the service worker with automatic retry.
+   * On first failure (SW asleep / cold start), waits 300ms and retries once.
+   */
   function send(type, data = {}) {
     return new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage({ type, ...data }, (response) => {
-          if (chrome.runtime.lastError) {
-            resolve(null);
+      function attempt(retries) {
+        try {
+          chrome.runtime.sendMessage({ type, ...data }, (response) => {
+            if (chrome.runtime.lastError) {
+              if (retries > 0) {
+                // SW may be waking up — retry after a short delay
+                setTimeout(() => attempt(retries - 1), 300);
+              } else {
+                resolve(null);
+              }
+            } else {
+              resolve(response);
+            }
+          });
+        } catch {
+          if (retries > 0) {
+            setTimeout(() => attempt(retries - 1), 300);
           } else {
-            resolve(response);
+            resolve(null);
           }
-        });
-      } catch {
-        resolve(null);
+        }
       }
+      attempt(1); // 1 retry = 2 total attempts
     });
   }
 

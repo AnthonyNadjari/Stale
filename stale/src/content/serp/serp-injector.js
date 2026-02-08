@@ -134,56 +134,76 @@
 
   /**
    * Try to extract a date from the Google snippet text.
-   * Google often shows dates like "Jan 15, 2024 — " or "3 days ago — "
+   * Google shows dates in various formats and positions within snippets.
    */
   function extractDateFromSnippet(resultEl) {
-    // Look for the snippet / description area
+    // Look for the snippet / description area using multiple selectors
+    // Google changes class names frequently, so we cast a wide net
     const snippetEls = resultEl.querySelectorAll(
-      '[data-sncf], .VwiC3b, .IsZvec, .lEBKkf, span[class]'
+      '[data-sncf], .VwiC3b, .IsZvec, .lEBKkf, .LEwnzc, .Uroaid, span[class]'
     );
 
     for (const el of snippetEls) {
-      const text = el.textContent || '';
-      // Google typically puts dates at the start of snippets
-      const first200 = text.substring(0, 200);
+      const text = (el.textContent || '').trim();
+      if (!text) continue;
 
-      // Pattern: "Jan 15, 2024" / "January 15, 2024"
-      let m = first200.match(/^(\w{3,9}\s+\d{1,2},\s+\d{4})/);
+      // Check the first 300 chars for date patterns
+      const first300 = text.substring(0, 300);
+
+      // Pattern: "Jan 15, 2024" / "January 15, 2024" (anywhere in text)
+      let m = first300.match(/(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\w*\s+\d{1,2},?\s+\d{4})/i);
       if (m) {
         const d = DateUtils.parseDate(m[1]);
         if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
       }
 
-      // Pattern: "15 Jan 2024"
-      m = first200.match(/^(\d{1,2}\s+\w{3,9}\s+\d{4})/);
+      // Pattern: "15 Jan 2024" / "15 January 2024"
+      m = first300.match(/(\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\w*\s+\d{4})/i);
       if (m) {
         const d = DateUtils.parseDate(m[1]);
         if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
       }
 
       // Pattern: "3 days ago", "2 months ago", etc.
-      m = first200.match(/^(\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago)/i);
+      m = first300.match(/(\b\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago)/i);
       if (m) {
         const d = DateUtils.parseDate(m[1]);
         if (d) return { published: d, modified: null, confidence: 0.65, source: 'serp-snippet' };
       }
 
       // Pattern: "2024-01-15"
-      m = first200.match(/^(\d{4}-\d{2}-\d{2})/);
+      m = first300.match(/(\b\d{4}-\d{2}-\d{2})/);
       if (m) {
         const d = DateUtils.parseDate(m[1]);
         if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
       }
+
+      // Pattern: "01/15/2024" or "15/01/2024"
+      m = first300.match(/(\b\d{1,2}\/\d{1,2}\/\d{4})/);
+      if (m) {
+        const d = DateUtils.parseDate(m[1]);
+        if (d) return { published: d, modified: null, confidence: 0.55, source: 'serp-snippet' };
+      }
     }
 
     // Also check the cite/breadcrumb area (some results show dates there)
-    const citeEls = resultEl.querySelectorAll('cite, .TbwUpd, .byrV5b');
+    const citeEls = resultEl.querySelectorAll('cite, .TbwUpd, .byrV5b, .LEwnzc, .Uroaid');
     for (const el of citeEls) {
       const text = el.textContent || '';
-      const m = text.match(/(\w{3,9}\s+\d{1,2},\s+\d{4})/);
+      const m = text.match(/(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\w*\s+\d{1,2},?\s+\d{4})/i);
       if (m) {
         const d = DateUtils.parseDate(m[1]);
         if (d) return { published: d, modified: null, confidence: 0.60, source: 'serp-snippet' };
+      }
+    }
+
+    // Check for Google's dedicated date elements (span with specific data attributes)
+    const dateEls = resultEl.querySelectorAll('span[data-sncf="2"], span.MUxGbd');
+    for (const el of dateEls) {
+      const text = (el.textContent || '').trim();
+      if (text) {
+        const d = DateUtils.parseDate(text);
+        if (d) return { published: d, modified: null, confidence: 0.75, source: 'serp-date-element' };
       }
     }
 
@@ -196,6 +216,9 @@
   function injectBadge(resultEl, freshness, dateInfo) {
     const titleLink = resultEl.querySelector('a[href] h3');
     if (!titleLink) return;
+
+    // Avoid double-injection
+    if (resultEl.querySelector('[data-stale-badge]')) return;
 
     const badge = document.createElement('span');
     badge.className = `stale-serp-badge stale-serp-badge--${freshness.colorName}`;

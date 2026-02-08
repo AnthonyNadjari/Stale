@@ -55,21 +55,37 @@ const DEFAULTS = {
 const httpDateStore = new Map();
 
 // ── Alarms ──────────────────────────────────────────────
+// Use an async init to avoid top-level throws on SW cold start
 
-chrome.alarms.create('quota-reset', {
-  when: nextMidnightUTC(),
-  periodInMinutes: 24 * 60
-});
+async function ensureAlarms() {
+  try {
+    const existing = await chrome.alarms.getAll();
+    const names = existing.map(a => a.name);
 
-chrome.alarms.create('cache-cleanup', {
-  delayInMinutes: 10,
-  periodInMinutes: 6 * 60
-});
+    if (!names.includes('quota-reset')) {
+      await chrome.alarms.create('quota-reset', {
+        when: nextMidnightUTC(),
+        periodInMinutes: 24 * 60
+      });
+    }
+    if (!names.includes('cache-cleanup')) {
+      await chrome.alarms.create('cache-cleanup', {
+        delayInMinutes: 10,
+        periodInMinutes: 6 * 60
+      });
+    }
+    if (!names.includes('license-revalidation')) {
+      await chrome.alarms.create('license-revalidation', {
+        delayInMinutes: 5,
+        periodInMinutes: 24 * 60
+      });
+    }
+  } catch (_) {
+    // Alarms API not ready yet — will be set up on next SW wake
+  }
+}
 
-chrome.alarms.create('license-revalidation', {
-  delayInMinutes: 5,
-  periodInMinutes: 24 * 60
-});
+ensureAlarms();
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'quota-reset') resetQuota();
@@ -92,42 +108,68 @@ function onHeadersReceived(details) {
 
 let webRequestListenerActive = false;
 
+// Mutex to prevent concurrent setupPageAnalyzer calls (race condition fix)
+let setupInProgress = false;
+
 async function setupPageAnalyzerAndWebRequest() {
-  const hasAllUrls = await new Promise(r =>
-    chrome.permissions.contains({ origins: ['<all_urls>'] }, r)
-  );
-  if (!hasAllUrls) return;
-
-  const data = await getStorage(['preferences']);
-  const prefs = data.preferences || DEFAULTS.preferences;
-  if (!prefs.showBadgeOnPages) return;
-
-  if (!webRequestListenerActive) {
-    chrome.webRequest.onHeadersReceived.addListener(
-      onHeadersReceived,
-      { urls: ['<all_urls>'] },
-      ['responseHeaders']
-    );
-    webRequestListenerActive = true;
-  }
+  // Prevent concurrent calls from racing each other
+  if (setupInProgress) return;
+  setupInProgress = true;
 
   try {
-    const existing = await chrome.scripting.getRegisteredContentScripts();
-    if (existing.some(s => s.id === PAGE_ANALYZER_SCRIPT_ID)) return;
-  } catch (_) {}
+    const hasAllUrls = await new Promise(r =>
+      chrome.permissions.contains({ origins: ['<all_urls>'] }, r)
+    );
+    if (!hasAllUrls) return;
 
-  await chrome.scripting.registerContentScripts([{
-    id: PAGE_ANALYZER_SCRIPT_ID,
-    matches: ['<all_urls>'],
-    excludeMatches: GOOGLE_SERP_PATTERNS,
-    js: [
-      'src/shared/config.js', 'src/shared/date-utils.js', 'src/shared/freshness.js', 'src/shared/messaging.js',
-      'src/extractors/meta-extractor.js', 'src/extractors/jsonld-extractor.js', 'src/extractors/time-element-extractor.js',
-      'src/extractors/heuristic-extractor.js', 'src/extractors/index.js', 'src/content/page/page-analyzer.js'
-    ],
-    css: ['src/content/page/badge-overlay.css'],
-    runAt: 'document_idle'
-  }]);
+    const data = await getStorage(['preferences']);
+    const prefs = data.preferences || DEFAULTS.preferences;
+    if (!prefs.showBadgeOnPages) return;
+
+    if (!webRequestListenerActive) {
+      try {
+        chrome.webRequest.onHeadersReceived.addListener(
+          onHeadersReceived,
+          { urls: ['<all_urls>'] },
+          ['responseHeaders']
+        );
+        webRequestListenerActive = true;
+      } catch (_) {
+        // webRequest listener already registered or unavailable
+      }
+    }
+
+    // Check if already registered before attempting to register
+    try {
+      const existing = await chrome.scripting.getRegisteredContentScripts();
+      if (existing.some(s => s.id === PAGE_ANALYZER_SCRIPT_ID)) return;
+    } catch (_) {
+      // scripting API not ready — skip
+      return;
+    }
+
+    try {
+      await chrome.scripting.registerContentScripts([{
+        id: PAGE_ANALYZER_SCRIPT_ID,
+        matches: ['<all_urls>'],
+        excludeMatches: GOOGLE_SERP_PATTERNS,
+        js: [
+          'src/shared/config.js', 'src/shared/date-utils.js', 'src/shared/freshness.js', 'src/shared/messaging.js',
+          'src/extractors/meta-extractor.js', 'src/extractors/jsonld-extractor.js', 'src/extractors/time-element-extractor.js',
+          'src/extractors/heuristic-extractor.js', 'src/extractors/index.js', 'src/content/page/page-analyzer.js'
+        ],
+        css: ['src/content/page/badge-overlay.css'],
+        runAt: 'document_idle'
+      }]);
+    } catch (err) {
+      // Script already registered (race) or other error — safe to ignore
+      if (!err.message?.includes('Duplicate')) {
+        console.warn('Stale: registerContentScripts error:', err.message);
+      }
+    }
+  } finally {
+    setupInProgress = false;
+  }
 }
 
 async function unregisterPageAnalyzer() {
@@ -148,8 +190,13 @@ async function unregisterPageAnalyzer() {
 // ── Message Handler ─────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  handleMessage(msg).then(sendResponse);
-  return true;
+  handleMessage(msg)
+    .then(sendResponse)
+    .catch((err) => {
+      console.error('Stale SW handleMessage error:', err);
+      sendResponse({ error: err.message || 'Internal error' });
+    });
+  return true; // keep the channel open for async response
 });
 
 async function handleMessage(msg) {
@@ -193,6 +240,7 @@ async function handleMessage(msg) {
       const cache = data.cache || {};
       const entry = cache[msg.url] || null;
 
+      // Check TTL (24h)
       if (entry && (Date.now() - entry.cachedAt) > 24 * 60 * 60 * 1000) {
         delete cache[msg.url];
         await setStorage({ cache });
@@ -221,10 +269,11 @@ async function handleMessage(msg) {
     }
 
     case MSG.SET_LICENSE: {
+      const licenseInput = msg.license || {};
       const license = {
-        isPaid: !!msg.license.isPaid,
-        purchaseDate: msg.license.purchaseDate || null,
-        email: msg.license.email || null
+        isPaid: !!licenseInput.isPaid,
+        purchaseDate: licenseInput.purchaseDate || null,
+        email: licenseInput.email || null
       };
       await setStorage({ license });
       return { ok: true };
@@ -378,6 +427,9 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     if (!data.license) await setStorage({ license: DEFAULTS.license });
     if (!data.cache) await setStorage({ cache: {} });
   }
+
+  // On install/update, unregister first to avoid duplicate ID, then re-register
+  await unregisterPageAnalyzer();
   await setupPageAnalyzerAndWebRequest();
 });
 

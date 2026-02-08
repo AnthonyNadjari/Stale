@@ -25,11 +25,12 @@ In the Vercel dashboard → your project → **Settings** → **Environment Vari
 
 Redeploy: `vercel --prod`
 
-### 3. Paste your Vercel URL in the extension
+### 3. Update the extension (if your URL changed)
 
-Replace `https://stale-api.example.com` with your Vercel URL in:
-- `stale/src/shared/config.js` (line 11)
-- `stale/src/background/service-worker.js` (line 8)
+The extension currently points to `https://backend-iota-one-85.vercel.app`.
+If your Vercel URL is different, update it in:
+- `stale/src/shared/config.js` → `API_BASE_URL`
+- `stale/src/background/service-worker.js` → `API_BASE_URL`
 
 Done. The extension opens your Stripe Payment Link directly for checkout.
 The server only handles verification.
