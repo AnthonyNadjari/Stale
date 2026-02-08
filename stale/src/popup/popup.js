@@ -229,7 +229,7 @@
 
   document.querySelector('.popup__footer-link')?.addEventListener('click', (e) => {
     e.preventDefault();
-    chrome.tabs.create({ url: 'https://stale-extension.com/privacy' });
+    chrome.tabs.create({ url: 'https://anthonynadjari.github.io/PrivacyPolicy/stale/' });
   });
 
   // ── Auto-verify (background check on popup open) ────

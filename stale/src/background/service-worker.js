@@ -108,48 +108,43 @@ function onHeadersReceived(details) {
 
 let webRequestListenerActive = false;
 
-// Mutex to prevent concurrent setupPageAnalyzer calls (race condition fix)
-let setupInProgress = false;
+// Promise-based deduplication: if setup is already running, reuse its promise
+let pageAnalyzerSetupPromise = null;
 
 async function setupPageAnalyzerAndWebRequest() {
-  // Prevent concurrent calls from racing each other
-  if (setupInProgress) return;
-  setupInProgress = true;
+  // If a setup is already in progress, return the existing promise
+  if (pageAnalyzerSetupPromise) return pageAnalyzerSetupPromise;
 
-  try {
-    const hasAllUrls = await new Promise(r =>
-      chrome.permissions.contains({ origins: ['<all_urls>'] }, r)
-    );
-    if (!hasAllUrls) return;
+  pageAnalyzerSetupPromise = (async () => {
+    try {
+      const hasAllUrls = await new Promise(r =>
+        chrome.permissions.contains({ origins: ['<all_urls>'] }, r)
+      );
+      if (!hasAllUrls) return;
 
-    const data = await getStorage(['preferences']);
-    const prefs = data.preferences || DEFAULTS.preferences;
-    if (!prefs.showBadgeOnPages) return;
+      const data = await getStorage(['preferences']);
+      const prefs = data.preferences || DEFAULTS.preferences;
+      if (!prefs.showBadgeOnPages) return;
 
-    if (!webRequestListenerActive) {
-      try {
-        chrome.webRequest.onHeadersReceived.addListener(
-          onHeadersReceived,
-          { urls: ['<all_urls>'] },
-          ['responseHeaders']
-        );
-        webRequestListenerActive = true;
-      } catch (_) {
-        // webRequest listener already registered or unavailable
+      if (!webRequestListenerActive) {
+        try {
+          chrome.webRequest.onHeadersReceived.addListener(
+            onHeadersReceived,
+            { urls: ['<all_urls>'] },
+            ['responseHeaders']
+          );
+          webRequestListenerActive = true;
+        } catch (_) {
+          // webRequest listener already registered or unavailable
+        }
       }
-    }
 
-    // Check if already registered before attempting to register
-    try {
-      const existing = await chrome.scripting.getRegisteredContentScripts();
-      if (existing.some(s => s.id === PAGE_ANALYZER_SCRIPT_ID)) return;
-    } catch (_) {
-      // scripting API not ready — skip
-      return;
-    }
+      // Unregister first to guarantee no duplicate ID error
+      try {
+        await chrome.scripting.unregisterContentScripts({ ids: [PAGE_ANALYZER_SCRIPT_ID] });
+      } catch (_) {}
 
-    try {
-      await chrome.scripting.registerContentScripts([{
+      const scriptConfig = {
         id: PAGE_ANALYZER_SCRIPT_ID,
         matches: ['<all_urls>'],
         excludeMatches: GOOGLE_SERP_PATTERNS,
@@ -160,16 +155,25 @@ async function setupPageAnalyzerAndWebRequest() {
         ],
         css: ['src/content/page/badge-overlay.css'],
         runAt: 'document_idle'
-      }]);
-    } catch (err) {
-      // Script already registered (race) or other error — safe to ignore
-      if (!err.message?.includes('Duplicate')) {
-        console.warn('Stale: registerContentScripts error:', err.message);
+      };
+
+      try {
+        await chrome.scripting.registerContentScripts([scriptConfig]);
+      } catch (err) {
+        // If it still fails with Duplicate, try again after unregister
+        if (err?.message?.includes('Duplicate')) {
+          try {
+            await chrome.scripting.unregisterContentScripts({ ids: [PAGE_ANALYZER_SCRIPT_ID] });
+            await chrome.scripting.registerContentScripts([scriptConfig]);
+          } catch (_) {}
+        }
       }
+    } finally {
+      pageAnalyzerSetupPromise = null;
     }
-  } finally {
-    setupInProgress = false;
-  }
+  })();
+
+  return pageAnalyzerSetupPromise;
 }
 
 async function unregisterPageAnalyzer() {
@@ -427,20 +431,17 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     if (!data.license) await setStorage({ license: DEFAULTS.license });
     if (!data.cache) await setStorage({ cache: {} });
   }
-
-  // On install/update, unregister first to avoid duplicate ID, then re-register
-  await unregisterPageAnalyzer();
-  await setupPageAnalyzerAndWebRequest();
+  setupPageAnalyzerAndWebRequest().catch(() => {});
 });
 
 chrome.permissions.onAdded.addListener((permissions) => {
   if (permissions.origins && permissions.origins.includes('<all_urls>')) {
-    setupPageAnalyzerAndWebRequest();
+    setupPageAnalyzerAndWebRequest().catch(() => {});
   }
 });
 
 // On service worker startup, register page script if permission + prefs allow
-setupPageAnalyzerAndWebRequest();
+setupPageAnalyzerAndWebRequest().catch(() => {});
 
 // ── Helpers ─────────────────────────────────────────────
 
