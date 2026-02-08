@@ -11,10 +11,10 @@
   align-items: center !important;
   gap: 6px !important;
   position: relative !important;
-  margin-left: 10px !important;
+  margin-left: 0 !important;
   margin-right: 0 !important;
-  margin-top: 0 !important;
-  margin-bottom: 0 !important;
+  margin-top: 4px !important;
+  margin-bottom: 2px !important;
   padding: 3px 10px 3px 8px !important;
   border-radius: 6px !important;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif !important;
@@ -32,11 +32,12 @@
   max-width: none !important;
   max-height: none !important;
   height: auto !important;
-  width: auto !important;
+  width: fit-content !important;
   float: none !important;
   text-decoration: none !important;
   box-sizing: border-box !important;
   -webkit-text-size-adjust: none !important;
+  clear: both !important;
 }
 
 @keyframes stale-fadein {

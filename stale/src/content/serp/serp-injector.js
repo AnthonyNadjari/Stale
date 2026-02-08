@@ -284,7 +284,6 @@
     if (m) {
       const n = parseInt(m[1], 10);
       const unit = m[2].toLowerCase();
-      const now = new Date();
       const map = { minute: 'minute', heure: 'hour', jour: 'day', semaine: 'week', mois: 'month', an: 'year' };
       const d = DateUtils.parseDate(`${n} ${map[unit] || 'day'}s ago`);
       if (d) return { published: d, modified: null, confidence: 0.65, source: 'serp-snippet' };
@@ -322,7 +321,7 @@
     }
 
     // Build badge: ● Label · age (matching promo style)
-    const badge = document.createElement('span');
+    const badge = document.createElement('div');
     badge.className = `stale-serp-badge stale-serp-badge--${freshness.colorName}`;
     badge.setAttribute('data-stale-badge', 'true');
 
@@ -372,17 +371,33 @@
     tooltip.innerHTML = tooltipHTML;
     badge.appendChild(tooltip);
 
-    // Insert badge — try multiple strategies
-    // Strategy 1: Insert after h3 as a sibling
-    if (h3.parentElement) {
-      h3.parentElement.insertBefore(badge, h3.nextSibling);
-      console.debug('[Stale] Badge injected after h3');
+    // Find the best insertion point — we need a visible, non-clipped container
+    // Google's DOM: MjjYud > (various wrappers) > a > h3
+    // We want to insert OUTSIDE the <a> tag to avoid link styling and clipping
+
+    // Walk up from h3 to find the link or title container
+    const link = h3.closest('a');
+    const titleContainer = link
+      ? (link.parentElement || h3.parentElement)  // parent of the <a> tag
+      : h3.parentElement;                         // parent of h3 if no link
+
+    if (titleContainer) {
+      // Insert after the link/title container as a new block
+      titleContainer.insertBefore(badge, (link || h3).nextSibling);
+      console.debug('[Stale] Badge injected after title container');
       return;
     }
 
-    // Strategy 2: Append inside the h3 itself
+    // Fallback: insert directly after h3
+    if (h3.parentElement) {
+      h3.parentElement.insertBefore(badge, h3.nextSibling);
+      console.debug('[Stale] Badge injected after h3 (fallback)');
+      return;
+    }
+
+    // Last resort: append inside h3
     h3.appendChild(badge);
-    console.debug('[Stale] Badge appended inside h3');
+    console.debug('[Stale] Badge appended inside h3 (last resort)');
   }
 
   /**
