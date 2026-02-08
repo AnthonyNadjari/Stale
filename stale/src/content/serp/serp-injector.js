@@ -6,9 +6,18 @@
 
   const { CONFIG, DateUtils, Freshness, Messaging } = window.Stale;
 
-  // Check if extension is enabled
-  const prefs = await Messaging.getPreferences();
-  if (!prefs || !prefs.enabled || !prefs.showBadgeOnSerp) return;
+  // Check if extension is enabled — if SW is cold/unresponsive, use defaults
+  // so badges still appear (instead of silently aborting)
+  let prefs = await Messaging.getPreferences();
+  if (!prefs) {
+    // SW not ready — use safe defaults so badges still show
+    prefs = {
+      enabled: true,
+      showBadgeOnSerp: true,
+      thresholds: CONFIG.THRESHOLDS
+    };
+  }
+  if (prefs.enabled === false || prefs.showBadgeOnSerp === false) return;
 
   const thresholds = prefs.thresholds || CONFIG.THRESHOLDS;
 
@@ -132,9 +141,38 @@
     return results;
   }
 
+  // ── Month name patterns (English + French for Google.fr) ──
+
+  const EN_MONTHS = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec';
+  const FR_MONTHS = 'janv|févr|mars|avr|mai|juin|juil|août|sept|oct|nov|déc';
+  const ALL_MONTHS = EN_MONTHS + '|' + FR_MONTHS;
+
+  // Map French abbreviated months to Date-parseable English
+  const FR_TO_EN = {
+    'janv': 'Jan', 'févr': 'Feb', 'mars': 'Mar', 'avr': 'Apr',
+    'mai': 'May', 'juin': 'Jun', 'juil': 'Jul', 'août': 'Aug',
+    'sept': 'Sep', 'oct': 'Oct', 'nov': 'Nov', 'déc': 'Dec'
+  };
+
+  /**
+   * Normalize a date string: strip trailing dots from month abbreviations,
+   * convert French month names to English equivalents.
+   */
+  function normalizeDateStr(str) {
+    // Remove trailing dots from month abbreviations (e.g. "oct." → "oct")
+    let s = str.replace(/(\w+)\.\s/g, '$1 ');
+    // Replace French month names with English
+    for (const [fr, en] of Object.entries(FR_TO_EN)) {
+      const re = new RegExp('\\b' + fr + '\\b', 'gi');
+      s = s.replace(re, en);
+    }
+    return s;
+  }
+
   /**
    * Try to extract a date from the Google snippet text.
    * Google shows dates in various formats and positions within snippets.
+   * Supports English and French date formats.
    */
   function extractDateFromSnippet(resultEl) {
     // Look for the snippet / description area using multiple selectors
@@ -147,54 +185,17 @@
       const text = (el.textContent || '').trim();
       if (!text) continue;
 
-      // Check the first 300 chars for date patterns
-      const first300 = text.substring(0, 300);
-
-      // Pattern: "Jan 15, 2024" / "January 15, 2024" (anywhere in text)
-      let m = first300.match(/(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\w*\s+\d{1,2},?\s+\d{4})/i);
-      if (m) {
-        const d = DateUtils.parseDate(m[1]);
-        if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
-      }
-
-      // Pattern: "15 Jan 2024" / "15 January 2024"
-      m = first300.match(/(\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\w*\s+\d{4})/i);
-      if (m) {
-        const d = DateUtils.parseDate(m[1]);
-        if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
-      }
-
-      // Pattern: "3 days ago", "2 months ago", etc.
-      m = first300.match(/(\b\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago)/i);
-      if (m) {
-        const d = DateUtils.parseDate(m[1]);
-        if (d) return { published: d, modified: null, confidence: 0.65, source: 'serp-snippet' };
-      }
-
-      // Pattern: "2024-01-15"
-      m = first300.match(/(\b\d{4}-\d{2}-\d{2})/);
-      if (m) {
-        const d = DateUtils.parseDate(m[1]);
-        if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
-      }
-
-      // Pattern: "01/15/2024" or "15/01/2024"
-      m = first300.match(/(\b\d{1,2}\/\d{1,2}\/\d{4})/);
-      if (m) {
-        const d = DateUtils.parseDate(m[1]);
-        if (d) return { published: d, modified: null, confidence: 0.55, source: 'serp-snippet' };
-      }
+      const date = tryExtractDate(text.substring(0, 300));
+      if (date) return date;
     }
 
     // Also check the cite/breadcrumb area (some results show dates there)
     const citeEls = resultEl.querySelectorAll('cite, .TbwUpd, .byrV5b, .LEwnzc, .Uroaid');
     for (const el of citeEls) {
-      const text = el.textContent || '';
-      const m = text.match(/(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\w*\s+\d{1,2},?\s+\d{4})/i);
-      if (m) {
-        const d = DateUtils.parseDate(m[1]);
-        if (d) return { published: d, modified: null, confidence: 0.60, source: 'serp-snippet' };
-      }
+      const text = (el.textContent || '').trim();
+      if (!text) continue;
+      const date = tryExtractDate(text);
+      if (date) return { ...date, confidence: 0.60 };
     }
 
     // Check for Google's dedicated date elements (span with specific data attributes)
@@ -202,9 +203,63 @@
     for (const el of dateEls) {
       const text = (el.textContent || '').trim();
       if (text) {
-        const d = DateUtils.parseDate(text);
+        const normalized = normalizeDateStr(text);
+        const d = DateUtils.parseDate(normalized);
         if (d) return { published: d, modified: null, confidence: 0.75, source: 'serp-date-element' };
       }
+    }
+
+    return null;
+  }
+
+  /**
+   * Try all date patterns against a text string.
+   */
+  function tryExtractDate(text) {
+    // Pattern: "Jan 15, 2024" / "January 15, 2024" / "oct. 15, 2024" (EN + FR)
+    let m = text.match(new RegExp('((?:' + ALL_MONTHS + ')\\w*\\.?\\s+\\d{1,2},?\\s+\\d{4})', 'i'));
+    if (m) {
+      const d = DateUtils.parseDate(normalizeDateStr(m[1]));
+      if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
+    }
+
+    // Pattern: "15 Jan 2024" / "15 oct. 2024" / "16 oct. 2021"
+    m = text.match(new RegExp('(\\d{1,2}\\s+(?:' + ALL_MONTHS + ')\\w*\\.?\\s+\\d{4})', 'i'));
+    if (m) {
+      const d = DateUtils.parseDate(normalizeDateStr(m[1]));
+      if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
+    }
+
+    // Pattern: "3 days ago", "2 months ago", etc. (English)
+    m = text.match(/(\b\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago)/i);
+    if (m) {
+      const d = DateUtils.parseDate(m[1]);
+      if (d) return { published: d, modified: null, confidence: 0.65, source: 'serp-snippet' };
+    }
+
+    // Pattern: French relative "il y a X jours/mois/ans"
+    m = text.match(/il\s+y\s+a\s+(\d+)\s+(minute|heure|jour|semaine|mois|an)s?/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      const unit = m[2].toLowerCase();
+      const now = new Date();
+      const map = { minute: 'minute', heure: 'hour', jour: 'day', semaine: 'week', mois: 'month', an: 'year' };
+      const d = DateUtils.parseDate(`${n} ${map[unit] || 'day'}s ago`);
+      if (d) return { published: d, modified: null, confidence: 0.65, source: 'serp-snippet' };
+    }
+
+    // Pattern: "2024-01-15"
+    m = text.match(/(\b\d{4}-\d{2}-\d{2})/);
+    if (m) {
+      const d = DateUtils.parseDate(m[1]);
+      if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
+    }
+
+    // Pattern: "01/15/2024" or "15/01/2024"
+    m = text.match(/(\b\d{1,2}[\/\.]\d{1,2}[\/\.]\d{4})/);
+    if (m) {
+      const d = DateUtils.parseDate(m[1]);
+      if (d) return { published: d, modified: null, confidence: 0.55, source: 'serp-snippet' };
     }
 
     return null;

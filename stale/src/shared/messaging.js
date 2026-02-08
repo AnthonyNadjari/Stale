@@ -10,17 +10,17 @@ window.Stale.Messaging = (() => {
 
   /**
    * Send a message to the service worker with automatic retry.
-   * On first failure (SW asleep / cold start), waits 300ms and retries once.
+   * Retries up to 2 times with progressive delays (300ms, 600ms)
+   * to handle SW cold starts reliably.
    */
   function send(type, data = {}) {
     return new Promise((resolve) => {
-      function attempt(retries) {
+      function attempt(retries, delay) {
         try {
           chrome.runtime.sendMessage({ type, ...data }, (response) => {
             if (chrome.runtime.lastError) {
               if (retries > 0) {
-                // SW may be waking up — retry after a short delay
-                setTimeout(() => attempt(retries - 1), 300);
+                setTimeout(() => attempt(retries - 1, delay + 300), delay);
               } else {
                 resolve(null);
               }
@@ -30,13 +30,13 @@ window.Stale.Messaging = (() => {
           });
         } catch {
           if (retries > 0) {
-            setTimeout(() => attempt(retries - 1), 300);
+            setTimeout(() => attempt(retries - 1, delay + 300), delay);
           } else {
             resolve(null);
           }
         }
       }
-      attempt(1); // 1 retry = 2 total attempts
+      attempt(2, 300); // 2 retries = 3 total attempts (300ms, 600ms delays)
     });
   }
 

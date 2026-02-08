@@ -6,10 +6,15 @@ window.Stale = window.Stale || {};
 window.Stale.DateUtils = (() => {
 
   const MONTHS = {
+    // English
     january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
     july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
     jan: 0, feb: 1, mar: 2, apr: 3, jun: 5,
-    jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11
+    jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11,
+    // French
+    janvier: 0, février: 1, mars: 2, avril: 3, mai: 4, juin: 5,
+    juillet: 6, août: 7, septembre: 8, octobre: 9, novembre: 10, décembre: 11,
+    janv: 0, févr: 1, avr: 3, juil: 6, déc: 11
   };
 
   /**
@@ -33,6 +38,9 @@ window.Stale.DateUtils = (() => {
     if (typeof input !== 'string') return null;
 
     let str = input.trim();
+
+    // Strip trailing dots from month abbreviations (e.g. "oct." → "oct")
+    str = str.replace(/(\b\w{3,5})\.\s/g, '$1 ');
 
     // Relative dates: "2 days ago", "3 months ago", "last week", etc.
     const relative = parseRelative(str);

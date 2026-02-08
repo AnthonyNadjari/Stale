@@ -14,3 +14,7 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+# Duplicate / old copies
+Stale-1/
+api/
