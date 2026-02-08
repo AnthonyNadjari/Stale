@@ -1,7 +1,11 @@
 /**
  * Stale — Service Worker
- * Orchestrates caching, quotas, HTTP header capture, and messaging.
+ * Orchestrates caching, quotas, HTTP header capture, licensing, and messaging.
  */
+
+// ── License server URL ──────────────────────────────────
+// After deploying the backend, replace this with your server URL.
+const API_BASE_URL = 'https://stale-api.example.com';
 
 const MSG = {
   GET_HTTP_DATE:        'GET_HTTP_DATE',
@@ -11,6 +15,7 @@ const MSG = {
   SET_CACHE:            'SET_CACHE',
   GET_LICENSE:          'GET_LICENSE',
   SET_LICENSE:          'SET_LICENSE',
+  VERIFY_LICENSE:       'VERIFY_LICENSE',
   GET_PREFERENCES:      'GET_PREFERENCES',
   SET_PREFERENCES:      'SET_PREFERENCES',
   TOGGLE_ENABLED:       'TOGGLE_ENABLED',
@@ -33,7 +38,8 @@ const DEFAULTS = {
   },
   license: {
     isPaid: false,
-    purchaseDate: null
+    purchaseDate: null,
+    email: null
   },
   preferences: {
     enabled: true,
@@ -51,19 +57,24 @@ const httpDateStore = new Map();
 // ── Alarms ──────────────────────────────────────────────
 
 chrome.alarms.create('quota-reset', {
-  // Fire at next midnight UTC, then every 24h
   when: nextMidnightUTC(),
   periodInMinutes: 24 * 60
 });
 
 chrome.alarms.create('cache-cleanup', {
   delayInMinutes: 10,
-  periodInMinutes: 6 * 60 // every 6h
+  periodInMinutes: 6 * 60
+});
+
+chrome.alarms.create('license-revalidation', {
+  delayInMinutes: 5,
+  periodInMinutes: 24 * 60
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'quota-reset') resetQuota();
   if (alarm.name === 'cache-cleanup') cleanupCache();
+  if (alarm.name === 'license-revalidation') revalidateLicense();
 });
 
 // ── HTTP Header Capture (only when optional <all_urls> is granted) ───────
@@ -138,7 +149,7 @@ async function unregisterPageAnalyzer() {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   handleMessage(msg).then(sendResponse);
-  return true; // keep the channel open for async response
+  return true;
 });
 
 async function handleMessage(msg) {
@@ -154,7 +165,6 @@ async function handleMessage(msg) {
       const quota = data.quota || DEFAULTS.quota;
       const license = data.license || DEFAULTS.license;
 
-      // Reset if date changed
       if (quota.resetDate !== todayString()) {
         quota.serpAugmentations = 0;
         quota.resetDate = todayString();
@@ -183,7 +193,6 @@ async function handleMessage(msg) {
       const cache = data.cache || {};
       const entry = cache[msg.url] || null;
 
-      // Check TTL (24h)
       if (entry && (Date.now() - entry.cachedAt) > 24 * 60 * 60 * 1000) {
         delete cache[msg.url];
         await setStorage({ cache });
@@ -213,11 +222,16 @@ async function handleMessage(msg) {
 
     case MSG.SET_LICENSE: {
       const license = {
-        isPaid: msg.isPaid !== false,
-        purchaseDate: msg.purchaseDate || (msg.isPaid ? new Date().toISOString().slice(0, 10) : null)
+        isPaid: !!msg.license.isPaid,
+        purchaseDate: msg.license.purchaseDate || null,
+        email: msg.license.email || null
       };
       await setStorage({ license });
-      return { ok: true, license };
+      return { ok: true };
+    }
+
+    case MSG.VERIFY_LICENSE: {
+      return await verifyLicenseWithServer(msg.email);
     }
 
     case MSG.GET_PREFERENCES: {
@@ -256,6 +270,66 @@ async function handleMessage(msg) {
   }
 }
 
+// ── License Verification ────────────────────────────────
+
+async function verifyLicenseWithServer(email) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/verify-license`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    if (!res.ok) {
+      return { error: 'Verification server error' };
+    }
+
+    const result = await res.json();
+
+    const license = {
+      isPaid: !!result.isPaid,
+      purchaseDate: result.purchaseDate || null,
+      email: email
+    };
+    await setStorage({ license });
+
+    return license;
+  } catch (err) {
+    return { error: 'Network error — check your connection' };
+  }
+}
+
+// ── Periodic License Revalidation ───────────────────────
+
+async function revalidateLicense() {
+  const data = await getStorage(['license']);
+  const license = data.license || DEFAULTS.license;
+
+  if (!license.email) return;
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/verify-license`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: license.email })
+    });
+
+    if (!res.ok) return;
+
+    const result = await res.json();
+
+    await setStorage({
+      license: {
+        isPaid: !!result.isPaid,
+        purchaseDate: result.purchaseDate || null,
+        email: license.email
+      }
+    });
+  } catch {
+    // Network error — keep current license state
+  }
+}
+
 // ── Quota Reset ─────────────────────────────────────────
 
 async function resetQuota() {
@@ -271,11 +345,10 @@ async function resetQuota() {
 async function cleanupCache() {
   const data = await getStorage(['cache']);
   const cache = data.cache || {};
-  const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
+  const maxAge = 7 * 24 * 60 * 60 * 1000;
   const maxEntries = 5000;
   const now = Date.now();
 
-  // Remove expired entries
   const urls = Object.keys(cache);
   for (const url of urls) {
     if ((now - cache[url].cachedAt) > maxAge) {
@@ -283,7 +356,6 @@ async function cleanupCache() {
     }
   }
 
-  // If still too many, remove oldest
   const remaining = Object.entries(cache);
   if (remaining.length > maxEntries) {
     remaining.sort((a, b) => a[1].cachedAt - b[1].cachedAt);

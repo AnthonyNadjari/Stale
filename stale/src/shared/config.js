@@ -5,6 +5,14 @@
 window.Stale = window.Stale || {};
 
 window.Stale.CONFIG = {
+  // ── License server URL ────────────────────────────────
+  // After deploying the backend, replace this with your server URL.
+  // e.g. 'https://stale-xxx.vercel.app'
+  API_BASE_URL: 'https://stale-api.example.com',
+
+  // ── Stripe Payment Link ───────────────────────────────
+  STRIPE_PAYMENT_LINK: 'https://buy.stripe.com/14A4gydLk4PGgAcgEdaEE00',
+
   // Freshness thresholds in months
   THRESHOLDS: {
     green: 6,
@@ -42,11 +50,6 @@ window.Stale.CONFIG = {
     grey:   'Unknown'
   },
 
-  // Payment: Stripe Checkout for Stale Pro
-  CHECKOUT_URL: 'https://buy.stripe.com/14A4gydLk4PGgAcgEdaEE00',
-  // Optional: backend URL to validate license keys (POST { key } → { valid: true } or 4xx)
-  LICENSE_VERIFY_URL: '',
-
   // Message types for SW communication
   MSG: {
     GET_HTTP_DATE:    'GET_HTTP_DATE',
@@ -56,6 +59,7 @@ window.Stale.CONFIG = {
     SET_CACHE:        'SET_CACHE',
     GET_LICENSE:      'GET_LICENSE',
     SET_LICENSE:      'SET_LICENSE',
+    VERIFY_LICENSE:   'VERIFY_LICENSE',
     GET_PREFERENCES:  'GET_PREFERENCES',
     SET_PREFERENCES:  'SET_PREFERENCES',
     TOGGLE_ENABLED:   'TOGGLE_ENABLED'

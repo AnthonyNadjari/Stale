@@ -12,7 +12,6 @@ window.Stale.Messaging = (() => {
       try {
         chrome.runtime.sendMessage({ type, ...data }, (response) => {
           if (chrome.runtime.lastError) {
-            // SW may be inactive — return a safe default
             resolve(null);
           } else {
             resolve(response);
@@ -48,8 +47,12 @@ window.Stale.Messaging = (() => {
     return send(MSG.GET_LICENSE);
   }
 
-  function setLicense(payload) {
-    return send(MSG.SET_LICENSE, payload);
+  function setLicense(license) {
+    return send(MSG.SET_LICENSE, { license });
+  }
+
+  function verifyLicense(email) {
+    return send(MSG.VERIFY_LICENSE, { email });
   }
 
   function getPreferences() {
@@ -67,6 +70,7 @@ window.Stale.Messaging = (() => {
   return {
     send, getHttpDate, checkQuota, incrementQuota,
     getCache, setCache, getLicense, setLicense,
+    verifyLicense,
     getPreferences, setPreferences, toggleEnabled
   };
 

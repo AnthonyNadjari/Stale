@@ -89,19 +89,29 @@
       </div>
     </div>
 
-    <!-- Upgrade (free tier) -->
+    <!-- Upgrade: Step 1 — CTA (free tier) -->
     <div class="popup__upgrade" id="upgradeSection">
       <div class="popup__upgrade-title">Stale Pro</div>
-      <div class="popup__upgrade-desc">Unlimited SERP badges, filter old results, export reports.</div>
+      <div class="popup__upgrade-desc" id="upgradeDesc">Unlimited SERP badges, filter old results, export reports.</div>
       <button class="popup__upgrade-btn" id="upgradeBtn">Upgrade — $4.99</button>
-      <div class="popup__license-key">
-        <button type="button" class="popup__license-key-toggle" id="licenseKeyToggle">Have a license key?</button>
-        <div class="popup__license-key-form" id="licenseKeyForm" style="display:none">
-          <input type="text" id="licenseKeyInput" class="popup__license-key-input" placeholder="Paste your key">
-          <button type="button" class="popup__license-key-btn" id="licenseKeyActivate">Activate</button>
-          <div class="popup__license-key-error" id="licenseKeyError"></div>
-        </div>
+      <div class="popup__restore">
+        <a href="#" id="restoreLink" class="popup__restore-link">Already Pro? Restore purchase</a>
       </div>
+    </div>
+
+    <!-- Upgrade: Step 2 — Email form -->
+    <div class="popup__checkout" id="checkoutSection" style="display:none">
+      <div class="popup__checkout-title" id="checkoutTitle">Enter your email</div>
+      <div class="popup__checkout-subtitle" id="checkoutSubtitle">We'll send your receipt here</div>
+      <input type="email" id="checkoutEmail" class="popup__checkout-input" placeholder="you@example.com" autocomplete="email">
+      <div class="popup__checkout-error" id="checkoutError"></div>
+      <button class="popup__upgrade-btn" id="checkoutBtn">Continue to payment</button>
+      <a href="#" id="checkoutBack" class="popup__checkout-back">Back</a>
+    </div>
+
+    <!-- Upgrade: Step 3 — Verifying -->
+    <div class="popup__verifying" id="verifyingSection" style="display:none">
+      <div class="popup__verifying-text">Verifying payment...</div>
     </div>
 
     <!-- Pro badge (paid) -->
