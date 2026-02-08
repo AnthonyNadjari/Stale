@@ -432,8 +432,8 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // Always reset/update quota on install or update to pick up new dailyLimit
   const quota = data.quota || DEFAULTS.quota;
   quota.dailyLimit = DEFAULTS.quota.dailyLimit;
-  // On fresh install or update, reset the counter
-  if (details.reason === 'install' || quota.resetDate !== todayString()) {
+  // Reset counter on fresh install, update, or new day
+  if (details.reason === 'install' || details.reason === 'update' || quota.resetDate !== todayString()) {
     quota.serpAugmentations = 0;
     quota.resetDate = todayString();
   }

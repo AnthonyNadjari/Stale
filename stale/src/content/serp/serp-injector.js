@@ -3,13 +3,27 @@
  * Injects freshness badges onto Google Search results.
  */
 (async () => {
+  try {
+
+  // Guard: make sure shared modules loaded
+  if (!window.Stale || !window.Stale.CONFIG) {
+    console.error('[Stale] SERP injector: window.Stale not available');
+    return;
+  }
 
   const { CONFIG, DateUtils, Freshness, Messaging } = window.Stale;
 
+  console.log('[Stale] SERP injector loaded');
+
   // Check if extension is enabled — if SW is cold/unresponsive, use defaults
   // so badges still appear (instead of silently aborting)
-  let prefs = await Messaging.getPreferences();
-  if (!prefs) {
+  let prefs = null;
+  try {
+    prefs = await Messaging.getPreferences();
+  } catch (e) {
+    console.warn('[Stale] getPreferences failed:', e);
+  }
+  if (!prefs || typeof prefs !== 'object' || prefs.error) {
     // SW not ready — use safe defaults so badges still show
     prefs = {
       enabled: true,
@@ -71,6 +85,7 @@
 
   async function processResults() {
     const results = getOrganicResults();
+    console.log('[Stale] Found', results.length, 'organic results');
 
     for (const result of results) {
       if (result.dataset.staleProcessed) continue;
@@ -78,7 +93,7 @@
 
       // Find the link URL — try multiple selectors
       const link = result.querySelector('a[href]');
-      if (!link) continue;
+      if (!link) { console.debug('[Stale] No link in result'); continue; }
 
       const url = link.href;
       if (!url || url.startsWith('javascript:') || url.startsWith('#')) continue;
@@ -299,8 +314,12 @@
     // Avoid double-injection
     if (resultEl.querySelector('[data-stale-badge]')) return;
 
-    const titleEl = findTitleElement(resultEl);
-    if (!titleEl) return;
+    // Find the h3 title element
+    const h3 = resultEl.querySelector('h3');
+    if (!h3) {
+      console.debug('[Stale] No h3 found in result');
+      return;
+    }
 
     // Build badge: ● Label · age (matching promo style)
     const badge = document.createElement('span');
@@ -353,11 +372,17 @@
     tooltip.innerHTML = tooltipHTML;
     badge.appendChild(tooltip);
 
-    // Insert the badge after the title element
-    const h3 = titleEl.tagName === 'H3' ? titleEl : titleEl.closest('h3') || titleEl;
+    // Insert badge — try multiple strategies
+    // Strategy 1: Insert after h3 as a sibling
     if (h3.parentElement) {
       h3.parentElement.insertBefore(badge, h3.nextSibling);
+      console.debug('[Stale] Badge injected after h3');
+      return;
     }
+
+    // Strategy 2: Append inside the h3 itself
+    h3.appendChild(badge);
+    console.debug('[Stale] Badge appended inside h3');
   }
 
   /**
@@ -390,4 +415,7 @@
     }
   }
 
+  } catch (err) {
+    console.error('[Stale] SERP injector error:', err);
+  }
 })();
