@@ -113,7 +113,9 @@ async function setupPageAnalyzerAndWebRequest() {
 
   try {
     const existing = await chrome.scripting.getRegisteredContentScripts();
-    if (existing.some(s => s.id === PAGE_ANALYZER_SCRIPT_ID)) return;
+    if (existing.some(s => s.id === PAGE_ANALYZER_SCRIPT_ID)) {
+      await chrome.scripting.unregisterContentScripts({ ids: [PAGE_ANALYZER_SCRIPT_ID] });
+    }
   } catch (_) {}
 
   await chrome.scripting.registerContentScripts([{
