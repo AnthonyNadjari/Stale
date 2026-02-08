@@ -71,12 +71,14 @@
   // If "Badge on pages" is on but optional permission not yet granted,
   // just uncheck — user will be prompted when they toggle it on (user gesture required)
   if (showPagesCheckbox.checked) {
-    const hasAllUrls = await new Promise(r =>
-      chrome.permissions.contains({ origins: ['<all_urls>'] }, r)
-    );
-    if (!hasAllUrls) {
+    try {
+      const hasAllUrls = await chrome.permissions.contains({ origins: ['<all_urls>'] });
+      if (!hasAllUrls) {
+        showPagesCheckbox.checked = false;
+        savePrefs({ showBadgeOnPages: false });
+      }
+    } catch (_) {
       showPagesCheckbox.checked = false;
-      savePrefs({ showBadgeOnPages: false });
     }
   }
 
@@ -111,17 +113,18 @@
   showPagesCheckbox.addEventListener('change', async () => {
     const enabled = showPagesCheckbox.checked;
     if (enabled) {
-      const hasAllUrls = await new Promise(r =>
-        chrome.permissions.contains({ origins: ['<all_urls>'] }, r)
-      );
-      if (!hasAllUrls) {
-        const granted = await new Promise(r =>
-          chrome.permissions.request({ origins: ['<all_urls>'] }, r)
-        );
-        if (!granted) {
-          showPagesCheckbox.checked = false;
-          return;
+      try {
+        const hasAllUrls = await chrome.permissions.contains({ origins: ['<all_urls>'] });
+        if (!hasAllUrls) {
+          const granted = await chrome.permissions.request({ origins: ['<all_urls>'] });
+          if (!granted) {
+            showPagesCheckbox.checked = false;
+            return;
+          }
         }
+      } catch (_) {
+        showPagesCheckbox.checked = false;
+        return;
       }
     }
     savePrefs({ showBadgeOnPages: showPagesCheckbox.checked });
@@ -317,13 +320,21 @@
     sendMessage('SET_PREFERENCES', { prefs: partial });
   }
 
-  function sendMessage(type, data = {}) {
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type, ...data }, (response) => {
-        if (chrome.runtime.lastError) resolve(null);
-        else resolve(response);
-      });
-    });
+  async function sendMessage(type, data = {}) {
+    // Retry once if the service worker is not yet active (cold start)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await chrome.runtime.sendMessage({ type, ...data });
+        return response;
+      } catch (err) {
+        if (attempt === 0 && err?.message?.includes('SW')) {
+          await new Promise(r => setTimeout(r, 300));
+          continue;
+        }
+        return null;
+      }
+    }
+    return null;
   }
 
 })();
