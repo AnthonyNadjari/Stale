@@ -173,6 +173,43 @@
     return null;
   }
 
+  // ── Deep fetch queue: fetch URLs in background to detect dates ──
+
+  const deepFetchQueue = [];
+  const DEEP_FETCH_CONCURRENCY = 3;
+  let deepFetchRunning = false;
+
+  async function processDeepFetchQueue() {
+    if (deepFetchRunning) return;
+    deepFetchRunning = true;
+
+    while (deepFetchQueue.length > 0) {
+      // Process in batches
+      const batch = deepFetchQueue.splice(0, DEEP_FETCH_CONCURRENCY);
+      await Promise.all(batch.map(async ({ result, url }) => {
+        try {
+          const resp = await Messaging.fetchDateFromUrl(url);
+          if (!resp?.entry) return;
+
+          const dateInfo = {
+            published: resp.entry.published ? new Date(resp.entry.published) : null,
+            modified:  resp.entry.modified ? new Date(resp.entry.modified) : null,
+            confidence: resp.entry.confidence,
+            source:     resp.entry.source
+          };
+
+          // Recompute freshness and update the badge
+          const freshness = Freshness.getFreshnessInfo(dateInfo.published, dateInfo.modified, thresholds);
+          injectBadge(result, freshness, dateInfo);
+        } catch {
+          // Fetch failed — leave the Unknown badge
+        }
+      }));
+    }
+
+    deepFetchRunning = false;
+  }
+
   // ── Quota check ─────────────────────────────────────
 
   const quotaStatus = await Messaging.checkQuota();
@@ -237,43 +274,6 @@
     childList: true,
     subtree: true
   });
-
-  // ── Deep fetch queue: fetch URLs in background to detect dates ──
-
-  const deepFetchQueue = [];
-  const DEEP_FETCH_CONCURRENCY = 3;
-  let deepFetchRunning = false;
-
-  async function processDeepFetchQueue() {
-    if (deepFetchRunning) return;
-    deepFetchRunning = true;
-
-    while (deepFetchQueue.length > 0) {
-      // Process in batches
-      const batch = deepFetchQueue.splice(0, DEEP_FETCH_CONCURRENCY);
-      await Promise.all(batch.map(async ({ result, url }) => {
-        try {
-          const resp = await Messaging.fetchDateFromUrl(url);
-          if (!resp?.entry) return;
-
-          const dateInfo = {
-            published: resp.entry.published ? new Date(resp.entry.published) : null,
-            modified:  resp.entry.modified ? new Date(resp.entry.modified) : null,
-            confidence: resp.entry.confidence,
-            source:     resp.entry.source
-          };
-
-          // Recompute freshness and update the badge
-          const freshness = Freshness.getFreshnessInfo(dateInfo.published, dateInfo.modified, thresholds);
-          injectBadge(result, freshness, dateInfo);
-        } catch {
-          // Fetch failed — leave the Unknown badge
-        }
-      }));
-    }
-
-    deepFetchRunning = false;
-  }
 
   // ── Core: process all visible results ───────────────
 
