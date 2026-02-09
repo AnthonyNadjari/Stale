@@ -414,11 +414,8 @@
 
   /**
    * Inject the freshness badge next to the result title.
-   * Uses Shadow DOM to fully isolate from Google's stylesheets (which reverse text).
-   * Badge is appended inside the h3 so it stays on the same line as the title.
-   */
-  /**
-   * Inject badge. Pass dateInfo='checking' for the pulsing "Checking…" state.
+   * Uses Shadow DOM to fully isolate from Google's stylesheets.
+   * Pass dateInfo='checking' for the pulsing "Checking…" state.
    */
   function injectBadge(resultEl, freshness, dateInfo) {
     try {

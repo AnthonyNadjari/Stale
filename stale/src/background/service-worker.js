@@ -34,7 +34,7 @@ const DEFAULTS = {
   cache: {},
   quota: {
     serpAugmentations: 0,
-    dailyLimit: 50,
+    dailyLimit: 15,
     resetDate: todayString()
   },
   license: {
@@ -448,11 +448,11 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   if (!data.license) await setStorage({ license: DEFAULTS.license });
   if (!data.cache) await setStorage({ cache: {} });
 
-  // Always reset/update quota on install or update to pick up new dailyLimit
+  // Update dailyLimit from DEFAULTS (picks up new value), preserve counter
   const quota = data.quota || DEFAULTS.quota;
   quota.dailyLimit = DEFAULTS.quota.dailyLimit;
-  // Reset counter on fresh install, update, or new day
-  if (details.reason === 'install' || details.reason === 'update' || quota.resetDate !== todayString()) {
+  // Only reset counter on fresh install or new day — NOT on extension update
+  if (details.reason === 'install' || quota.resetDate !== todayString()) {
     quota.serpAugmentations = 0;
     quota.resetDate = todayString();
   }

@@ -282,7 +282,7 @@
 
   function updateQuota(q, lic) {
     const used  = q.used || 0;
-    const limit = q.limit || 50;
+    const limit = q.limit || 15;
     const isPaid = lic.isPaid || false;
 
     if (isPaid) {
