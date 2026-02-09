@@ -383,8 +383,45 @@
   }
 
   /**
+   * Shadow DOM CSS — fully isolates badge from Google's CORS-blocked stylesheets
+   * that force text reversal. Defined once, reused for every badge.
+   */
+  const BADGE_SHADOW_CSS = `
+    :host { display: inline-flex !important; vertical-align: middle !important; margin-left: 6px !important; }
+    .b {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 2px 8px 2px 6px; border-radius: 6px;
+      font: 500 12px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+      white-space: nowrap; color: #fff; cursor: default;
+      border: 1px solid rgba(255,255,255,0.35);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+      position: relative; direction: ltr;
+    }
+    .d { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+         background: rgba(255,255,255,0.9); flex-shrink: 0; }
+    .l { font-weight: 600; }
+    .a { color: rgba(255,255,255,0.9); }
+    .t { display: none; position: absolute; top: calc(100% + 6px); left: 0;
+         background: #1a1a1a; color: #d4d4d4; border-radius: 8px;
+         padding: 10px 14px; width: 220px; z-index: 999999;
+         box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+         font: 400 12px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+         white-space: normal; pointer-events: none; direction: ltr; }
+    .b:hover .t { display: block; }
+    .th { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .td { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .tl { font-weight: 600; font-size: 13px; }
+    .ta { margin-left: auto; color: #888; font-size: 11px; }
+    .tr { color: #aaa; margin: 3px 0; }
+    .tr strong { color: #ccc; font-weight: 500; }
+    .ts { color: #666; margin-top: 6px; padding-top: 6px;
+          border-top: 1px solid #333; font-size: 11px; }
+  `;
+
+  /**
    * Inject the freshness badge next to the result title.
-   * Badge in normal DOM so it always displays; LTR mark (U+200E) helps with RTL pages.
+   * Uses Shadow DOM to fully isolate from Google's stylesheets (which reverse text).
+   * Badge is appended inside the h3 so it stays on the same line as the title.
    */
   function injectBadge(resultEl, freshness, dateInfo) {
     try {
@@ -393,69 +430,39 @@
       const h3 = resultEl.querySelector('h3');
       if (!h3) return;
 
-      const badge = document.createElement('div');
-      badge.className = `stale-serp-badge stale-serp-badge--${freshness.colorName}`;
-      badge.setAttribute('data-stale-badge', 'true');
-      badge.setAttribute('dir', 'ltr');
+      const bg = freshness.color || '#6b7280';
 
-      const inner = document.createElement('span');
-      inner.className = 'stale-serp-badge__inner';
-      inner.setAttribute('dir', 'ltr');
+      // Shadow DOM host — appended inside h3 to stay on the same line as title text
+      const host = document.createElement('span');
+      host.setAttribute('data-stale-badge', 'true');
+      const shadow = host.attachShadow({ mode: 'open' });
 
-      const dot = document.createElement('span');
-      dot.className = 'stale-serp-badge__dot';
+      // Build tooltip HTML
+      let tipRows = '';
+      if (dateInfo?.published) tipRows += `<div class="tr"><strong>Published:</strong> ${freshness.publishedFormatted}</div>`;
+      if (dateInfo?.modified) tipRows += `<div class="tr"><strong>Modified:</strong> ${freshness.modifiedFormatted}</div>`;
+      if (dateInfo?.source) tipRows += `<div class="ts">Source: ${dateInfo.source}</div>`;
+      if (!dateInfo) tipRows += `<div class="tr">No date found yet. Visit the page to detect.</div>`;
 
-      const label = document.createElement('span');
-      label.className = 'stale-serp-badge__label';
-      label.setAttribute('dir', 'ltr');
-      label.textContent = freshness.label;
-
-      const age = document.createElement('span');
-      age.className = 'stale-serp-badge__age';
-      age.setAttribute('dir', 'ltr');
-      age.textContent = `\u00b7 ${freshness.ageText}`;
-
-      inner.appendChild(dot);
-      inner.appendChild(label);
-      inner.appendChild(age);
-      badge.appendChild(inner);
-
-      const tooltip = document.createElement('div');
-      tooltip.className = 'stale-serp-tooltip';
-      let tooltipHTML = `
-        <div class="stale-serp-tooltip__header">
-          <span class="stale-serp-tooltip__dot" style="background:${freshness.color}"></span>
-          <span class="stale-serp-tooltip__label" style="color:${freshness.color}">${freshness.label}</span>
-          <span class="stale-serp-tooltip__age">${freshness.ageText}</span>
-        </div>
+      shadow.innerHTML = `
+        <style>${BADGE_SHADOW_CSS}</style>
+        <span class="b" style="background:${bg}">
+          <span class="d"></span>
+          <span class="l">${freshness.label}</span>
+          <span class="a">\u00b7 ${freshness.ageText}</span>
+          <span class="t">
+            <div class="th">
+              <span class="td" style="background:${bg}"></span>
+              <span class="tl" style="color:${bg}">${freshness.label}</span>
+              <span class="ta">${freshness.ageText}</span>
+            </div>
+            ${tipRows}
+          </span>
+        </span>
       `;
-      if (dateInfo?.published) tooltipHTML += `<div class="stale-serp-tooltip__row"><strong>Published:</strong> ${freshness.publishedFormatted}</div>`;
-      if (dateInfo?.modified) tooltipHTML += `<div class="stale-serp-tooltip__row"><strong>Modified:</strong> ${freshness.modifiedFormatted}</div>`;
-      if (dateInfo?.source) tooltipHTML += `<div class="stale-serp-tooltip__source">Source: ${dateInfo.source}</div>`;
-      if (!dateInfo) tooltipHTML += `<div class="stale-serp-tooltip__row">No date found yet. Visit the page to detect.</div>`;
-      tooltip.innerHTML = tooltipHTML;
-      badge.appendChild(tooltip);
 
-      const link = h3.closest('a');
-      const titleRow = link ? link.parentElement : h3.parentElement;
-      if (titleRow && link) {
-        const wrapper = document.createElement('span');
-        wrapper.className = 'stale-serp-badge-row';
-        wrapper.setAttribute('dir', 'ltr');
-        titleRow.insertBefore(wrapper, link);
-        wrapper.appendChild(link);
-        wrapper.appendChild(badge);
-        return;
-      }
-      if (titleRow) {
-        titleRow.insertBefore(badge, (link || h3).nextSibling);
-        return;
-      }
-      if (h3.parentElement) {
-        h3.parentElement.insertBefore(badge, h3.nextSibling);
-        return;
-      }
-      h3.appendChild(badge);
+      // Place inside h3 at the end — stays on the same visual line as title text
+      h3.appendChild(host);
     } catch (e) {
       console.warn('[Stale] injectBadge failed:', e);
     }
