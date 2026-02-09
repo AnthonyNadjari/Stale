@@ -1,7 +1,7 @@
 /**
  * Stale — Google SERP Injector
  * Injects freshness badges onto Google Search results.
- * (Badge in normal DOM — no Shadow DOM, no STALE_BADGE_SHADOW_CSS)
+ * Uses Shadow DOM to isolate badge styles from Google's stylesheets.
  */
 (async () => {
   try {
@@ -172,6 +172,40 @@
     }
     return null;
   }
+
+  // ── Shadow DOM CSS (declared early to avoid TDZ) ────────────────
+
+  const BADGE_SHADOW_CSS = `
+    :host { display: inline-flex !important; vertical-align: middle !important; margin-left: 6px !important; }
+    .b {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 2px 8px 2px 6px; border-radius: 6px;
+      font: 500 12px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+      white-space: nowrap; color: #fff; cursor: default;
+      border: 1px solid rgba(255,255,255,0.35);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+      position: relative; direction: ltr;
+    }
+    .d { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+         background: rgba(255,255,255,0.9); flex-shrink: 0; }
+    .l { font-weight: 600; }
+    .a { color: rgba(255,255,255,0.9); }
+    .t { display: none; position: absolute; top: calc(100% + 6px); left: 0;
+         background: #1a1a1a; color: #d4d4d4; border-radius: 8px;
+         padding: 10px 14px; width: 220px; z-index: 999999;
+         box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+         font: 400 12px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+         white-space: normal; pointer-events: none; direction: ltr; }
+    .b:hover .t { display: block; }
+    .th { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .td { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .tl { font-weight: 600; font-size: 13px; }
+    .ta { margin-left: auto; color: #888; font-size: 11px; }
+    .tr { color: #aaa; margin: 3px 0; }
+    .tr strong { color: #ccc; font-weight: 500; }
+    .ts { color: #666; margin-top: 6px; padding-top: 6px;
+          border-top: 1px solid #333; font-size: 11px; }
+  `;
 
   // ── Deep fetch queue: fetch URLs in background to detect dates ──
 
@@ -368,55 +402,6 @@
 
     return Array.from(byUrl.values());
   }
-
-  /**
-   * Find the title element (h3) inside a result, regardless of DOM nesting.
-   * Google uses both <a href><h3>title</h3></a> and <h3><a href>title</a></h3>
-   */
-  function findTitleElement(resultEl) {
-    // Try both patterns
-    return resultEl.querySelector('a[href] h3')       // <a><h3>
-        || resultEl.querySelector('h3 a[href]')       // <h3><a>
-        || resultEl.querySelector('h3.LC20lb')        // Google's named class
-        || resultEl.querySelector('h3[class]')        // Any h3 with a class
-        || resultEl.querySelector('h3');              // Bare h3
-  }
-
-  /**
-   * Shadow DOM CSS — fully isolates badge from Google's CORS-blocked stylesheets
-   * that force text reversal. Defined once, reused for every badge.
-   */
-  const BADGE_SHADOW_CSS = `
-    :host { display: inline-flex !important; vertical-align: middle !important; margin-left: 6px !important; }
-    .b {
-      display: inline-flex; align-items: center; gap: 5px;
-      padding: 2px 8px 2px 6px; border-radius: 6px;
-      font: 500 12px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
-      white-space: nowrap; color: #fff; cursor: default;
-      border: 1px solid rgba(255,255,255,0.35);
-      box-shadow: 0 2px 6px rgba(0,0,0,0.12);
-      position: relative; direction: ltr;
-    }
-    .d { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-         background: rgba(255,255,255,0.9); flex-shrink: 0; }
-    .l { font-weight: 600; }
-    .a { color: rgba(255,255,255,0.9); }
-    .t { display: none; position: absolute; top: calc(100% + 6px); left: 0;
-         background: #1a1a1a; color: #d4d4d4; border-radius: 8px;
-         padding: 10px 14px; width: 220px; z-index: 999999;
-         box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-         font: 400 12px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
-         white-space: normal; pointer-events: none; direction: ltr; }
-    .b:hover .t { display: block; }
-    .th { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-    .td { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-    .tl { font-weight: 600; font-size: 13px; }
-    .ta { margin-left: auto; color: #888; font-size: 11px; }
-    .tr { color: #aaa; margin: 3px 0; }
-    .tr strong { color: #ccc; font-weight: 500; }
-    .ts { color: #666; margin-top: 6px; padding-top: 6px;
-          border-top: 1px solid #333; font-size: 11px; }
-  `;
 
   /**
    * Inject the freshness badge next to the result title.
