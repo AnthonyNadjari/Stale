@@ -1,6 +1,7 @@
 /**
  * Stale — Google SERP Injector
  * Injects freshness badges onto Google Search results.
+ * (Badge in normal DOM — no Shadow DOM, no STALE_BADGE_SHADOW_CSS)
  */
 (async () => {
   try {
@@ -35,6 +36,143 @@
 
   const thresholds = prefs.thresholds || CONFIG.THRESHOLDS;
 
+  // Month names: only used inside tryExtractDate (no top-level EN_MONTHS/FR_MONTHS to avoid duplicate declaration)
+  const FR_TO_EN = {
+    'janv': 'Jan', 'févr': 'Feb', 'mars': 'Mar', 'avr': 'Apr',
+    'mai': 'May', 'juin': 'Jun', 'juil': 'Jul', 'août': 'Aug',
+    'sept': 'Sep', 'oct': 'Oct', 'nov': 'Nov', 'déc': 'Dec'
+  };
+  const DE_MONTHS = { jan: 'Jan', feb: 'Feb', mär: 'Mar', mar: 'Mar', apr: 'Apr', mai: 'May', jun: 'Jun', jul: 'Jul', aug: 'Aug', sep: 'Sep', okt: 'Oct', nov: 'Nov', dez: 'Dec' };
+  const ES_MONTHS = { ene: 'Jan', feb: 'Feb', mar: 'Mar', abr: 'Apr', may: 'May', jun: 'Jun', jul: 'Jul', ago: 'Aug', sep: 'Sep', oct: 'Oct', nov: 'Nov', dic: 'Dec' };
+  function normalizeDateStr(str) {
+    let s = str.replace(/(\w+)\.\s/g, '$1 ');
+    for (const [fr, en] of Object.entries(FR_TO_EN)) {
+      const re = new RegExp('\\b' + fr + '\\b', 'gi');
+      s = s.replace(re, en);
+    }
+    for (const [de, en] of Object.entries(DE_MONTHS)) { s = s.replace(new RegExp('\\b' + de + '\\b', 'gi'), en); }
+    for (const [es, en] of Object.entries(ES_MONTHS)) { s = s.replace(new RegExp('\\b' + es + '\\b', 'gi'), en); }
+    return s;
+  }
+  function tryExtractDate(text) {
+    if (!text) return null;
+    const t = text.substring(0, 1000);
+    const monthsPat = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|janv|févr|mars|avr|mai|juin|juil|août|sept|oct|nov|déc|jan|feb|mär|mar|abr|may|ago|dic|ene|dez|okt';
+    // Month name + day + year (e.g. "Jan 15, 2021", "30 janv. 2018")
+    let m = t.match(new RegExp('((?:' + monthsPat + ')\\w*\\.?\\s+\\d{1,2},?\\s+\\d{4})', 'i'));
+    if (m) {
+      const d = DateUtils.parseDate(normalizeDateStr(m[1]));
+      if (d) return { published: d, modified: null, confidence: 0.72, source: 'serp-snippet' };
+    }
+    m = t.match(new RegExp('(\\d{1,2}\\s+(?:' + monthsPat + ')\\w*\\.?\\s+\\d{4})', 'i'));
+    if (m) {
+      const d = DateUtils.parseDate(normalizeDateStr(m[1]));
+      if (d) return { published: d, modified: null, confidence: 0.72, source: 'serp-snippet' };
+    }
+    // "— 30 janv. 2018" or "· 30 janv. 2018" or " - Jan 15, 2021" (common in snippets)
+    m = t.match(new RegExp('[—·\\-]\\s*(\\d{1,2}\\s+(?:' + monthsPat + ')\\w*\\.?\\s+\\d{4}|(?:' + monthsPat + ')\\w*\\.?\\s+\\d{1,2},?\\s+\\d{4})', 'i'));
+    if (m) {
+      const d = DateUtils.parseDate(normalizeDateStr(m[1].trim()));
+      if (d) return { published: d, modified: null, confidence: 0.75, source: 'serp-snippet' };
+    }
+    // "Published Mar 15, 2021" / "Publié le 15 mars 2021" / "Updated ..." / "Modified ..."
+    m = t.match(new RegExp('(?:published|publié|paru|updated|modified|modifié|mise à jour)\\s*(?:le?|on)?\\s*((?:' + monthsPat + ')\\w*\\.?\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}\\s+(?:' + monthsPat + ')\\w*\\.?\\s+\\d{4}|\\d{4}-\\d{2}-\\d{2})', 'i'));
+    if (m) {
+      const d = DateUtils.parseDate(normalizeDateStr(m[1]));
+      if (d) return { published: d, modified: null, confidence: 0.78, source: 'serp-snippet' };
+    }
+    m = t.match(/(\b\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago)/i);
+    if (m) {
+      const d = DateUtils.parseDate(m[1]);
+      if (d) return { published: d, modified: null, confidence: 0.65, source: 'serp-snippet' };
+    }
+    m = t.match(/il\s+y\s+a\s+(\d+)\s+(minute|heure|jour|semaine|mois|an)s?/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      const unit = m[2].toLowerCase();
+      const map = { minute: 'minute', heure: 'hour', jour: 'day', semaine: 'week', mois: 'month', an: 'year' };
+      const d = DateUtils.parseDate(`${n} ${map[unit] || 'day'}s ago`);
+      if (d) return { published: d, modified: null, confidence: 0.65, source: 'serp-snippet' };
+    }
+    // "8 years" / "8 ans" / "2 months" (snippet often shows "X years" without "ago")
+    m = t.match(/\b(\d+)\s+(years?|ans?)\b/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      const d = DateUtils.parseDate(`${n} years ago`);
+      if (d) return { published: d, modified: null, confidence: 0.68, source: 'serp-snippet' };
+    }
+    m = t.match(/\b(\d+)\s+(months?|mois)\b/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      const d = DateUtils.parseDate(`${n} months ago`);
+      if (d) return { published: d, modified: null, confidence: 0.66, source: 'serp-snippet' };
+    }
+    m = t.match(/\b(\d+)\s+(days?|jours?|weeks?|semaines?)\b/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      const u = (m[2] || '').toLowerCase();
+      const unit = /day|jour/.test(u) ? 'days' : 'weeks';
+      const d = DateUtils.parseDate(`${n} ${unit} ago`);
+      if (d) return { published: d, modified: null, confidence: 0.64, source: 'serp-snippet' };
+    }
+    // "last week" / "last month" / "cette semaine" / "ce mois"
+    m = t.match(/(?:last|past)\s+(week|month|year)/i);
+    if (m) {
+      const d = DateUtils.parseDate('1 ' + (m[1] || 'week') + ' ago');
+      if (d) return { published: d, modified: null, confidence: 0.60, source: 'serp-snippet' };
+    }
+    m = t.match(/(\b\d{4}-\d{2}-\d{2})/);
+    if (m) {
+      const d = DateUtils.parseDate(m[1]);
+      if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
+    }
+    m = t.match(/(\b\d{1,2}[\/\.]\d{1,2}[\/\.]\d{4})/);
+    if (m) {
+      const d = DateUtils.parseDate(m[1]);
+      if (d) return { published: d, modified: null, confidence: 0.55, source: 'serp-snippet' };
+    }
+    return null;
+  }
+  function extractDateFromSnippet(resultEl) {
+    // 1) Short explicit date elements first (Google date spans, high confidence)
+    const dateSelectors = 'span[data-sncf="2"], span.MUxGbd, [data-sncf], span[class*="date"], span[class*="Date"], .f, .LEwnzc.Sqrs3e';
+    const dateEls = resultEl.querySelectorAll(dateSelectors);
+    for (const el of dateEls) {
+      const text = (el.textContent || '').trim();
+      if (text && text.length < 120) {
+        const normalized = normalizeDateStr(text);
+        const d = DateUtils.parseDate(normalized);
+        if (d) return { published: d, modified: null, confidence: 0.78, source: 'serp-date-element' };
+      }
+    }
+    // 2) Snippet / description blocks (priority: short blocks then longer)
+    const snippetSelectors = '[data-sncf], .VwiC3b, .IsZvec, .lEBKkf, .LEwnzc, .Uroaid, .VuuXrf, .yXK7lf, .s3v9rd, .st, div[data-content-feature="1"], [data-content-feature]';
+    const snippetEls = resultEl.querySelectorAll(snippetSelectors);
+    const byLength = Array.from(snippetEls)
+      .map(el => ({ el, text: (el.textContent || '').trim() }))
+      .filter(({ text }) => text.length >= 10)
+      .sort((a, b) => a.text.length - b.text.length);
+    for (const { text } of byLength) {
+      const date = tryExtractDate(text);
+      if (date) return date;
+    }
+    // 3) Cite / URL line (sometimes has date)
+    const citeEls = resultEl.querySelectorAll('cite, .TbwUpd, .byrV5b, .Uroaid, .qzEoUe');
+    for (const el of citeEls) {
+      const text = (el.textContent || '').trim();
+      if (!text) continue;
+      const date = tryExtractDate(text);
+      if (date) return { ...date, confidence: 0.60 };
+    }
+    // 4) Full result text (catch dates anywhere in the card)
+    const fullText = (resultEl.textContent || '').replace(/\s+/g, ' ').trim();
+    if (fullText.length > 50) {
+      const date = tryExtractDate(fullText);
+      if (date) return { ...date, confidence: Math.min(0.65, date.confidence) };
+    }
+    return null;
+  }
+
   // ── Quota check ─────────────────────────────────────
 
   const quotaStatus = await Messaging.checkQuota();
@@ -48,9 +186,26 @@
 
   await processResults();
 
-  // Increment quota once per SERP page (not per result)
+  // Trigger deep fetch for results that had no date from snippet
+  processDeepFetchQueue();
+
+  // Increment quota once per SERP page; retries + deferred increment if SW was cold
   if (!quotaExhausted) {
-    await Messaging.incrementQuota();
+    let inc = await Messaging.incrementQuota();
+    if (inc == null) {
+      await new Promise(r => setTimeout(r, 500));
+      inc = await Messaging.incrementQuota();
+    }
+    if (inc == null) {
+      await new Promise(r => setTimeout(r, 1000));
+      inc = await Messaging.incrementQuota();
+    }
+    if (inc == null) {
+      setTimeout(async () => {
+        const ret = await Messaging.incrementQuota();
+        if (ret != null) console.log('[Stale] Quota incremented (deferred)');
+      }, 2000);
+    }
   }
 
   // ── MutationObserver for dynamic loading ────────────
@@ -73,13 +228,52 @@
       }
       if (hasNewResults) break;
     }
-    if (hasNewResults) processResults();
+    if (hasNewResults) {
+      processResults().then(() => processDeepFetchQueue());
+    }
   });
 
   observer.observe(document.getElementById('search') || document.body, {
     childList: true,
     subtree: true
   });
+
+  // ── Deep fetch queue: fetch URLs in background to detect dates ──
+
+  const deepFetchQueue = [];
+  const DEEP_FETCH_CONCURRENCY = 3;
+  let deepFetchRunning = false;
+
+  async function processDeepFetchQueue() {
+    if (deepFetchRunning) return;
+    deepFetchRunning = true;
+
+    while (deepFetchQueue.length > 0) {
+      // Process in batches
+      const batch = deepFetchQueue.splice(0, DEEP_FETCH_CONCURRENCY);
+      await Promise.all(batch.map(async ({ result, url }) => {
+        try {
+          const resp = await Messaging.fetchDateFromUrl(url);
+          if (!resp?.entry) return;
+
+          const dateInfo = {
+            published: resp.entry.published ? new Date(resp.entry.published) : null,
+            modified:  resp.entry.modified ? new Date(resp.entry.modified) : null,
+            confidence: resp.entry.confidence,
+            source:     resp.entry.source
+          };
+
+          // Recompute freshness and update the badge
+          const freshness = Freshness.getFreshnessInfo(dateInfo.published, dateInfo.modified, thresholds);
+          injectBadge(result, freshness, dateInfo);
+        } catch {
+          // Fetch failed — leave the Unknown badge
+        }
+      }));
+    }
+
+    deepFetchRunning = false;
+  }
 
   // ── Core: process all visible results ───────────────
 
@@ -120,22 +314,25 @@
         }
       }
 
-      // Compute freshness
+      // Compute freshness & inject badge (may be "Unknown" initially)
       const freshness = dateInfo
         ? Freshness.getFreshnessInfo(dateInfo.published, dateInfo.modified, thresholds)
         : Freshness.getFreshnessInfo(null, null, thresholds);
 
-      // Inject the badge
       injectBadge(result, freshness, dateInfo);
+
+      // If still no date, fire a background fetch to the actual URL
+      if (!dateInfo) {
+        deepFetchQueue.push({ result, url });
+      }
     }
   }
 
   /**
-   * Get organic search result containers using multiple defensive selectors.
+   * Get organic search result containers. Deduplicates by main link URL
+   * so we show exactly one badge per result (avoids duplicates from multiple selectors).
    */
   function getOrganicResults() {
-    // Google 2025-2026: .g is gone, results now use .MjjYud as outer wrapper
-    // and .yuRUbf for the title area. Keep .g as fallback for older layouts.
     const selectors = [
       '#rso > .MjjYud',
       '#rso .MjjYud',
@@ -147,27 +344,29 @@
     ];
 
     const seen = new Set();
-    const results = [];
+    const byUrl = new Map(); // first result element per normalized URL
 
     for (const selector of selectors) {
       try {
         const elements = document.querySelectorAll(selector);
         for (const el of elements) {
           if (seen.has(el)) continue;
-          // Accept the element if it has any title heading (h3)
-          // Google uses both <a><h3> and <h3><a> patterns
           const hasTitle = el.querySelector('h3');
-          if (hasTitle) {
-            seen.add(el);
-            results.push(el);
-          }
+          if (!hasTitle) continue;
+          seen.add(el);
+          const link = el.querySelector('a[href]');
+          const url = link?.href;
+          if (!url || url.startsWith('javascript:') || url.startsWith('#')) continue;
+          const norm = url.replace(/\/$/, '').split('?')[0];
+          if (byUrl.has(norm)) continue; // one badge per URL
+          byUrl.set(norm, el);
         }
       } catch {
         // Selector failed — try next
       }
     }
 
-    return results;
+    return Array.from(byUrl.values());
   }
 
   /**
@@ -183,221 +382,83 @@
         || resultEl.querySelector('h3');              // Bare h3
   }
 
-  // ── Month name patterns (English + French for Google.fr) ──
-
-  const EN_MONTHS = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec';
-  const FR_MONTHS = 'janv|févr|mars|avr|mai|juin|juil|août|sept|oct|nov|déc';
-  const ALL_MONTHS = EN_MONTHS + '|' + FR_MONTHS;
-
-  // Map French abbreviated months to Date-parseable English
-  const FR_TO_EN = {
-    'janv': 'Jan', 'févr': 'Feb', 'mars': 'Mar', 'avr': 'Apr',
-    'mai': 'May', 'juin': 'Jun', 'juil': 'Jul', 'août': 'Aug',
-    'sept': 'Sep', 'oct': 'Oct', 'nov': 'Nov', 'déc': 'Dec'
-  };
-
-  /**
-   * Normalize a date string: strip trailing dots from month abbreviations,
-   * convert French month names to English equivalents.
-   */
-  function normalizeDateStr(str) {
-    // Remove trailing dots from month abbreviations (e.g. "oct." → "oct")
-    let s = str.replace(/(\w+)\.\s/g, '$1 ');
-    // Replace French month names with English
-    for (const [fr, en] of Object.entries(FR_TO_EN)) {
-      const re = new RegExp('\\b' + fr + '\\b', 'gi');
-      s = s.replace(re, en);
-    }
-    return s;
-  }
-
-  /**
-   * Try to extract a date from the Google snippet text.
-   * Google shows dates in various formats and positions within snippets.
-   * Supports English and French date formats.
-   */
-  function extractDateFromSnippet(resultEl) {
-    // Look for the snippet / description area using multiple selectors
-    // Google changes class names frequently, so we cast a wide net
-    const snippetEls = resultEl.querySelectorAll(
-      '[data-sncf], .VwiC3b, .IsZvec, .lEBKkf, .LEwnzc, .Uroaid, span[class]'
-    );
-
-    for (const el of snippetEls) {
-      const text = (el.textContent || '').trim();
-      if (!text) continue;
-
-      const date = tryExtractDate(text.substring(0, 300));
-      if (date) return date;
-    }
-
-    // Also check the cite/breadcrumb area (some results show dates there)
-    const citeEls = resultEl.querySelectorAll('cite, .TbwUpd, .byrV5b, .LEwnzc, .Uroaid');
-    for (const el of citeEls) {
-      const text = (el.textContent || '').trim();
-      if (!text) continue;
-      const date = tryExtractDate(text);
-      if (date) return { ...date, confidence: 0.60 };
-    }
-
-    // Check for Google's dedicated date elements (span with specific data attributes)
-    const dateEls = resultEl.querySelectorAll('span[data-sncf="2"], span.MUxGbd');
-    for (const el of dateEls) {
-      const text = (el.textContent || '').trim();
-      if (text) {
-        const normalized = normalizeDateStr(text);
-        const d = DateUtils.parseDate(normalized);
-        if (d) return { published: d, modified: null, confidence: 0.75, source: 'serp-date-element' };
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Try all date patterns against a text string.
-   */
-  function tryExtractDate(text) {
-    // Pattern: "Jan 15, 2024" / "January 15, 2024" / "oct. 15, 2024" (EN + FR)
-    let m = text.match(new RegExp('((?:' + ALL_MONTHS + ')\\w*\\.?\\s+\\d{1,2},?\\s+\\d{4})', 'i'));
-    if (m) {
-      const d = DateUtils.parseDate(normalizeDateStr(m[1]));
-      if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
-    }
-
-    // Pattern: "15 Jan 2024" / "15 oct. 2024" / "16 oct. 2021"
-    m = text.match(new RegExp('(\\d{1,2}\\s+(?:' + ALL_MONTHS + ')\\w*\\.?\\s+\\d{4})', 'i'));
-    if (m) {
-      const d = DateUtils.parseDate(normalizeDateStr(m[1]));
-      if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
-    }
-
-    // Pattern: "3 days ago", "2 months ago", etc. (English)
-    m = text.match(/(\b\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago)/i);
-    if (m) {
-      const d = DateUtils.parseDate(m[1]);
-      if (d) return { published: d, modified: null, confidence: 0.65, source: 'serp-snippet' };
-    }
-
-    // Pattern: French relative "il y a X jours/mois/ans"
-    m = text.match(/il\s+y\s+a\s+(\d+)\s+(minute|heure|jour|semaine|mois|an)s?/i);
-    if (m) {
-      const n = parseInt(m[1], 10);
-      const unit = m[2].toLowerCase();
-      const map = { minute: 'minute', heure: 'hour', jour: 'day', semaine: 'week', mois: 'month', an: 'year' };
-      const d = DateUtils.parseDate(`${n} ${map[unit] || 'day'}s ago`);
-      if (d) return { published: d, modified: null, confidence: 0.65, source: 'serp-snippet' };
-    }
-
-    // Pattern: "2024-01-15"
-    m = text.match(/(\b\d{4}-\d{2}-\d{2})/);
-    if (m) {
-      const d = DateUtils.parseDate(m[1]);
-      if (d) return { published: d, modified: null, confidence: 0.70, source: 'serp-snippet' };
-    }
-
-    // Pattern: "01/15/2024" or "15/01/2024"
-    m = text.match(/(\b\d{1,2}[\/\.]\d{1,2}[\/\.]\d{4})/);
-    if (m) {
-      const d = DateUtils.parseDate(m[1]);
-      if (d) return { published: d, modified: null, confidence: 0.55, source: 'serp-snippet' };
-    }
-
-    return null;
-  }
-
   /**
    * Inject the freshness badge next to the result title.
+   * Badge in normal DOM so it always displays; LTR mark (U+200E) helps with RTL pages.
    */
   function injectBadge(resultEl, freshness, dateInfo) {
-    // Avoid double-injection
-    if (resultEl.querySelector('[data-stale-badge]')) return;
+    try {
+      resultEl.querySelectorAll('[data-stale-badge]').forEach(el => el.remove());
 
-    // Find the h3 title element
-    const h3 = resultEl.querySelector('h3');
-    if (!h3) {
-      console.debug('[Stale] No h3 found in result');
-      return;
+      const h3 = resultEl.querySelector('h3');
+      if (!h3) return;
+
+      const badge = document.createElement('div');
+      badge.className = `stale-serp-badge stale-serp-badge--${freshness.colorName}`;
+      badge.setAttribute('data-stale-badge', 'true');
+      badge.setAttribute('dir', 'ltr');
+
+      const inner = document.createElement('span');
+      inner.className = 'stale-serp-badge__inner';
+      inner.setAttribute('dir', 'ltr');
+
+      const dot = document.createElement('span');
+      dot.className = 'stale-serp-badge__dot';
+
+      const label = document.createElement('span');
+      label.className = 'stale-serp-badge__label';
+      label.setAttribute('dir', 'ltr');
+      label.textContent = freshness.label;
+
+      const age = document.createElement('span');
+      age.className = 'stale-serp-badge__age';
+      age.setAttribute('dir', 'ltr');
+      age.textContent = `\u00b7 ${freshness.ageText}`;
+
+      inner.appendChild(dot);
+      inner.appendChild(label);
+      inner.appendChild(age);
+      badge.appendChild(inner);
+
+      const tooltip = document.createElement('div');
+      tooltip.className = 'stale-serp-tooltip';
+      let tooltipHTML = `
+        <div class="stale-serp-tooltip__header">
+          <span class="stale-serp-tooltip__dot" style="background:${freshness.color}"></span>
+          <span class="stale-serp-tooltip__label" style="color:${freshness.color}">${freshness.label}</span>
+          <span class="stale-serp-tooltip__age">${freshness.ageText}</span>
+        </div>
+      `;
+      if (dateInfo?.published) tooltipHTML += `<div class="stale-serp-tooltip__row"><strong>Published:</strong> ${freshness.publishedFormatted}</div>`;
+      if (dateInfo?.modified) tooltipHTML += `<div class="stale-serp-tooltip__row"><strong>Modified:</strong> ${freshness.modifiedFormatted}</div>`;
+      if (dateInfo?.source) tooltipHTML += `<div class="stale-serp-tooltip__source">Source: ${dateInfo.source}</div>`;
+      if (!dateInfo) tooltipHTML += `<div class="stale-serp-tooltip__row">No date found yet. Visit the page to detect.</div>`;
+      tooltip.innerHTML = tooltipHTML;
+      badge.appendChild(tooltip);
+
+      const link = h3.closest('a');
+      const titleRow = link ? link.parentElement : h3.parentElement;
+      if (titleRow && link) {
+        const wrapper = document.createElement('span');
+        wrapper.className = 'stale-serp-badge-row';
+        wrapper.setAttribute('dir', 'ltr');
+        titleRow.insertBefore(wrapper, link);
+        wrapper.appendChild(link);
+        wrapper.appendChild(badge);
+        return;
+      }
+      if (titleRow) {
+        titleRow.insertBefore(badge, (link || h3).nextSibling);
+        return;
+      }
+      if (h3.parentElement) {
+        h3.parentElement.insertBefore(badge, h3.nextSibling);
+        return;
+      }
+      h3.appendChild(badge);
+    } catch (e) {
+      console.warn('[Stale] injectBadge failed:', e);
     }
-
-    // Build badge: ● Label · age (matching promo style)
-    const badge = document.createElement('div');
-    badge.className = `stale-serp-badge stale-serp-badge--${freshness.colorName}`;
-    badge.setAttribute('data-stale-badge', 'true');
-
-    // Colored dot
-    const dot = document.createElement('span');
-    dot.className = 'stale-serp-badge__dot';
-
-    // Label text (Fresh, Aging, Old, Stale, Unknown)
-    const label = document.createElement('span');
-    label.className = 'stale-serp-badge__label';
-    label.textContent = freshness.label;
-
-    // Age text
-    const age = document.createElement('span');
-    age.className = 'stale-serp-badge__age';
-    age.textContent = `\u00b7 ${freshness.ageText}`;
-
-    badge.appendChild(dot);
-    badge.appendChild(label);
-    badge.appendChild(age);
-
-    // Tooltip (shows on hover with more details)
-    const tooltip = document.createElement('div');
-    tooltip.className = 'stale-serp-tooltip';
-
-    let tooltipHTML = `
-      <div class="stale-serp-tooltip__header">
-        <span class="stale-serp-tooltip__dot" style="background:${freshness.color}"></span>
-        <span class="stale-serp-tooltip__label" style="color:${freshness.color}">${freshness.label}</span>
-        <span class="stale-serp-tooltip__age">${freshness.ageText}</span>
-      </div>
-    `;
-
-    if (dateInfo?.published) {
-      tooltipHTML += `<div class="stale-serp-tooltip__row"><strong>Published:</strong> ${freshness.publishedFormatted}</div>`;
-    }
-    if (dateInfo?.modified) {
-      tooltipHTML += `<div class="stale-serp-tooltip__row"><strong>Modified:</strong> ${freshness.modifiedFormatted}</div>`;
-    }
-    if (dateInfo?.source) {
-      tooltipHTML += `<div class="stale-serp-tooltip__source">Source: ${dateInfo.source}</div>`;
-    }
-    if (!dateInfo) {
-      tooltipHTML += `<div class="stale-serp-tooltip__row">No date found yet. Visit the page to detect.</div>`;
-    }
-
-    tooltip.innerHTML = tooltipHTML;
-    badge.appendChild(tooltip);
-
-    // Find the best insertion point — we need a visible, non-clipped container
-    // Google's DOM: MjjYud > (various wrappers) > a > h3
-    // We want to insert OUTSIDE the <a> tag to avoid link styling and clipping
-
-    // Walk up from h3 to find the link or title container
-    const link = h3.closest('a');
-    const titleContainer = link
-      ? (link.parentElement || h3.parentElement)  // parent of the <a> tag
-      : h3.parentElement;                         // parent of h3 if no link
-
-    if (titleContainer) {
-      // Insert after the link/title container as a new block
-      titleContainer.insertBefore(badge, (link || h3).nextSibling);
-      console.debug('[Stale] Badge injected after title container');
-      return;
-    }
-
-    // Fallback: insert directly after h3
-    if (h3.parentElement) {
-      h3.parentElement.insertBefore(badge, h3.nextSibling);
-      console.debug('[Stale] Badge injected after h3 (fallback)');
-      return;
-    }
-
-    // Last resort: append inside h3
-    h3.appendChild(badge);
-    console.debug('[Stale] Badge appended inside h3 (last resort)');
   }
 
   /**

@@ -320,22 +320,32 @@
     sendMessage('SET_PREFERENCES', { prefs: partial });
   }
 
-  async function sendMessage(type, data = {}) {
-    // Retry on failure — the SW may be waking up from idle (cold start)
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const response = await chrome.runtime.sendMessage({ type, ...data });
-        return response;
-      } catch (err) {
-        if (attempt < 2) {
-          // Wait progressively longer before retrying
-          await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
-          continue;
+  function sendMessage(type, data = {}) {
+    return new Promise((resolve) => {
+      function attempt(retries, delay) {
+        try {
+          chrome.runtime.sendMessage({ type, ...data }, (response) => {
+            const err = chrome.runtime.lastError;
+            if (err) {
+              if (retries > 0) {
+                setTimeout(() => attempt(retries - 1, delay + 200), delay);
+              } else {
+                resolve(null);
+              }
+              return;
+            }
+            resolve(response);
+          });
+        } catch {
+          if (retries > 0) {
+            setTimeout(() => attempt(retries - 1, delay + 200), delay);
+          } else {
+            resolve(null);
+          }
         }
-        return null;
       }
-    }
-    return null;
+      attempt(2, 200);
+    });
   }
 
 })();

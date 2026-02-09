@@ -18,15 +18,16 @@ window.Stale.Messaging = (() => {
       function attempt(retries, delay) {
         try {
           chrome.runtime.sendMessage({ type, ...data }, (response) => {
-            if (chrome.runtime.lastError) {
+            const err = chrome.runtime.lastError;
+            if (err) {
               if (retries > 0) {
                 setTimeout(() => attempt(retries - 1, delay + 300), delay);
               } else {
                 resolve(null);
               }
-            } else {
-              resolve(response);
+              return;
             }
+            resolve(response);
           });
         } catch {
           if (retries > 0) {
@@ -36,7 +37,7 @@ window.Stale.Messaging = (() => {
           }
         }
       }
-      attempt(2, 300); // 2 retries = 3 total attempts (300ms, 600ms delays)
+      attempt(2, 300);
     });
   }
 
@@ -84,11 +85,16 @@ window.Stale.Messaging = (() => {
     return send(MSG.TOGGLE_ENABLED, { enabled });
   }
 
+  function fetchDateFromUrl(url) {
+    return send(MSG.FETCH_DATE_FROM_URL, { url });
+  }
+
   return {
     send, getHttpDate, checkQuota, incrementQuota,
     getCache, setCache, getLicense, setLicense,
     verifyLicense,
-    getPreferences, setPreferences, toggleEnabled
+    getPreferences, setPreferences, toggleEnabled,
+    fetchDateFromUrl
   };
 
 })();

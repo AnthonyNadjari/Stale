@@ -19,7 +19,8 @@ const MSG = {
   GET_PREFERENCES:      'GET_PREFERENCES',
   SET_PREFERENCES:      'SET_PREFERENCES',
   TOGGLE_ENABLED:       'TOGGLE_ENABLED',
-  UNREGISTER_PAGE_SCRIPT: 'UNREGISTER_PAGE_SCRIPT'
+  UNREGISTER_PAGE_SCRIPT: 'UNREGISTER_PAGE_SCRIPT',
+  FETCH_DATE_FROM_URL:    'FETCH_DATE_FROM_URL'
 };
 
 const PAGE_ANALYZER_SCRIPT_ID = 'stale-page-analyzer';
@@ -58,6 +59,7 @@ const httpDateStore = new Map();
 // Use an async init to avoid top-level throws on SW cold start
 
 async function ensureAlarms() {
+  if (!chrome.alarms) return;
   try {
     const existing = await chrome.alarms.getAll();
     const names = existing.map(a => a.name);
@@ -87,11 +89,13 @@ async function ensureAlarms() {
 
 ensureAlarms();
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'quota-reset') resetQuota();
-  if (alarm.name === 'cache-cleanup') cleanupCache();
-  if (alarm.name === 'license-revalidation') revalidateLicense();
-});
+if (chrome.alarms) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'quota-reset') resetQuota();
+    if (alarm.name === 'cache-cleanup') cleanupCache();
+    if (alarm.name === 'license-revalidation') revalidateLicense();
+  });
+}
 
 // ── HTTP Header Capture (only when optional <all_urls> is granted) ───────
 
@@ -222,6 +226,9 @@ async function handleMessage(msg) {
         await setStorage({ quota });
       }
 
+      // Refresh the icon badge
+      updateBadgeCount(quota, license);
+
       return {
         used: quota.serpAugmentations,
         limit: quota.dailyLimit,
@@ -232,10 +239,18 @@ async function handleMessage(msg) {
     }
 
     case MSG.INCREMENT_QUOTA: {
-      const data = await getStorage(['quota']);
+      const data = await getStorage(['quota', 'license']);
       const quota = data.quota || DEFAULTS.quota;
+      const license = data.license || DEFAULTS.license;
+      // Reset counter if new day
+      if (quota.resetDate !== todayString()) {
+        quota.serpAugmentations = 0;
+        quota.resetDate = todayString();
+      }
       quota.serpAugmentations += 1;
       await setStorage({ quota });
+      // Update extension icon badge with count
+      updateBadgeCount(quota, license);
       return { used: quota.serpAugmentations };
     }
 
@@ -308,6 +323,10 @@ async function handleMessage(msg) {
     case MSG.UNREGISTER_PAGE_SCRIPT: {
       await unregisterPageAnalyzer();
       return { ok: true };
+    }
+
+    case MSG.FETCH_DATE_FROM_URL: {
+      return await fetchDateFromUrl(msg.url);
     }
 
     case MSG.TOGGLE_ENABLED: {
@@ -439,6 +458,10 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
   await setStorage({ quota });
 
+  // Refresh icon badge count
+  const licenseInit = data.license || DEFAULTS.license;
+  updateBadgeCount(quota, licenseInit);
+
   setupPageAnalyzerAndWebRequest().catch(() => {});
 });
 
@@ -450,6 +473,226 @@ chrome.permissions.onAdded.addListener((permissions) => {
 
 // On service worker startup, register page script if permission + prefs allow
 setupPageAnalyzerAndWebRequest().catch(() => {});
+
+// ── Fetch Date from URL (deep detection) ─────────────────
+
+// In-flight fetches to avoid duplicate requests for the same URL
+const fetchInFlight = new Map();
+
+async function fetchDateFromUrl(url) {
+  if (!url) return { entry: null };
+
+  // Check cache first
+  const data = await getStorage(['cache']);
+  const cache = data.cache || {};
+  const cached = cache[url];
+  if (cached && (Date.now() - cached.cachedAt) < 24 * 60 * 60 * 1000) {
+    return { entry: cached };
+  }
+
+  // Deduplicate in-flight requests
+  if (fetchInFlight.has(url)) {
+    return fetchInFlight.get(url);
+  }
+
+  const promise = (async () => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'text/html',
+          'User-Agent': 'Mozilla/5.0 (compatible; Stale/1.0)'
+        },
+        redirect: 'follow'
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) return { entry: null };
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('text/html')) return { entry: null };
+
+      // Read only first 50KB to avoid large downloads
+      const reader = res.body.getReader();
+      const chunks = [];
+      let totalSize = 0;
+      const maxSize = 50 * 1024;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        totalSize += value.length;
+        if (totalSize >= maxSize) break;
+      }
+      reader.cancel().catch(() => {});
+
+      const html = new TextDecoder().decode(
+        chunks.reduce((acc, chunk) => {
+          const merged = new Uint8Array(acc.length + chunk.length);
+          merged.set(acc);
+          merged.set(chunk, acc.length);
+          return merged;
+        }, new Uint8Array())
+      );
+
+      const dateInfo = extractDateFromHtml(html);
+
+      if (dateInfo) {
+        // Cache the result
+        const entry = {
+          published: dateInfo.published,
+          modified: dateInfo.modified,
+          confidence: dateInfo.confidence,
+          source: dateInfo.source,
+          cachedAt: Date.now()
+        };
+        const freshCache = (await getStorage(['cache'])).cache || {};
+        freshCache[url] = entry;
+        await setStorage({ cache: freshCache });
+        return { entry };
+      }
+
+      return { entry: null };
+    } catch (_) {
+      return { entry: null };
+    } finally {
+      fetchInFlight.delete(url);
+    }
+  })();
+
+  fetchInFlight.set(url, promise);
+  return promise;
+}
+
+/**
+ * Extract dates from raw HTML string using meta tags, JSON-LD, and time elements.
+ */
+function extractDateFromHtml(html) {
+  // 1) Open Graph / meta tags
+  const metaPatterns = [
+    /< *meta[^>]+(?:property|name)\s*=\s*["'](?:article:published_time|datePublished|date|DC\.date\.issued|sailthru\.date|publish[_-]?date|og:updated_time|article:modified_time)["'][^>]+content\s*=\s*["']([^"']+)["']/gi,
+    /< *meta[^>]+content\s*=\s*["']([^"']+)["'][^>]+(?:property|name)\s*=\s*["'](?:article:published_time|datePublished|date|DC\.date\.issued|sailthru\.date|publish[_-]?date|og:updated_time|article:modified_time)["']/gi
+  ];
+
+  let published = null;
+  let modified = null;
+
+  for (const re of metaPatterns) {
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const val = m[1].trim();
+      const d = tryParseISO(val);
+      if (d) {
+        const prop = m[0].toLowerCase();
+        if (prop.includes('modified') || prop.includes('updated')) {
+          if (!modified) modified = d.toISOString();
+        } else {
+          if (!published) published = d.toISOString();
+        }
+      }
+    }
+  }
+
+  // 2) JSON-LD datePublished / dateModified
+  const jsonLdRe = /<script[^>]+type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let jm;
+  while ((jm = jsonLdRe.exec(html)) !== null) {
+    try {
+      const obj = JSON.parse(jm[1]);
+      const items = Array.isArray(obj) ? obj : [obj];
+      for (const item of items) {
+        if (item.datePublished && !published) {
+          const d = tryParseISO(item.datePublished);
+          if (d) published = d.toISOString();
+        }
+        if (item.dateModified && !modified) {
+          const d = tryParseISO(item.dateModified);
+          if (d) modified = d.toISOString();
+        }
+        // Check @graph
+        if (item['@graph'] && Array.isArray(item['@graph'])) {
+          for (const node of item['@graph']) {
+            if (node.datePublished && !published) {
+              const d = tryParseISO(node.datePublished);
+              if (d) published = d.toISOString();
+            }
+            if (node.dateModified && !modified) {
+              const d = tryParseISO(node.dateModified);
+              if (d) modified = d.toISOString();
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // Invalid JSON-LD
+    }
+  }
+
+  // 3) <time datetime="..."> elements
+  if (!published) {
+    const timeRe = /<time[^>]+datetime\s*=\s*["']([^"']+)["']/gi;
+    let tm;
+    while ((tm = timeRe.exec(html)) !== null) {
+      const d = tryParseISO(tm[1]);
+      if (d) {
+        published = d.toISOString();
+        break;
+      }
+    }
+  }
+
+  if (published || modified) {
+    return {
+      published,
+      modified,
+      confidence: published ? 0.85 : 0.75,
+      source: 'url-fetch'
+    };
+  }
+
+  return null;
+}
+
+function tryParseISO(str) {
+  if (!str || typeof str !== 'string') return null;
+  const d = new Date(str.trim());
+  if (isNaN(d.getTime())) return null;
+  const year = d.getFullYear();
+  if (year < 1995 || d.getTime() > Date.now() + 86400000) return null;
+  return d;
+}
+
+// ── Badge Count on Extension Icon ────────────────────────
+
+function updateBadgeCount(quota, license) {
+  try {
+    const used = quota.serpAugmentations || 0;
+    const limit = quota.dailyLimit || 50;
+    const isPaid = license?.isPaid || false;
+
+    if (isPaid) {
+      chrome.action.setBadgeText({ text: '' });
+      return;
+    }
+
+    const text = used > 0 ? String(used) : '';
+    chrome.action.setBadgeText({ text });
+
+    // Color: green if under 70%, orange 70-99%, red at limit
+    const pct = (used / limit) * 100;
+    let color;
+    if (pct >= 100) color = '#ef4444';
+    else if (pct >= 70) color = '#f97316';
+    else color = '#22c55e';
+    chrome.action.setBadgeBackgroundColor({ color });
+  } catch (_) {
+    // action API may not be available
+  }
+}
 
 // ── Helpers ─────────────────────────────────────────────
 
