@@ -486,8 +486,13 @@ async function fetchDateFromUrl(url) {
   const data = await getStorage(['cache']);
   const cache = data.cache || {};
   const cached = cache[url];
-  if (cached && (Date.now() - cached.cachedAt) < 24 * 60 * 60 * 1000) {
-    return { entry: cached };
+  if (cached) {
+    const ttl = cached.negativeTTL || (24 * 60 * 60 * 1000);
+    if ((Date.now() - cached.cachedAt) < ttl) {
+      // Negative cache: source is 'no-date' — return null entry
+      if (cached.source === 'no-date') return { entry: null };
+      return { entry: cached };
+    }
   }
 
   // Deduplicate in-flight requests
@@ -498,28 +503,43 @@ async function fetchDateFromUrl(url) {
   const promise = (async () => {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
+      const timeout = setTimeout(() => controller.abort(), 6000);
 
       const res = await fetch(url, {
         signal: controller.signal,
         headers: {
-          'Accept': 'text/html',
-          'User-Agent': 'Mozilla/5.0 (compatible; Stale/1.0)'
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8'
         },
         redirect: 'follow'
       });
       clearTimeout(timeout);
 
-      if (!res.ok) return { entry: null };
+      if (!res.ok) {
+        console.debug('[Stale] fetch failed', res.status, url);
+        // Cache the failure so we don't retry for 6 hours
+        await cacheNegativeResult(url);
+        return { entry: null };
+      }
 
       const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('text/html')) return { entry: null };
+      if (!contentType.includes('text/html') && !contentType.includes('xhtml')) {
+        return { entry: null };
+      }
 
-      // Read only first 50KB to avoid large downloads
+      // Also check Last-Modified header as bonus signal
+      const lastModHeader = res.headers.get('last-modified');
+      let headerDate = null;
+      if (lastModHeader) {
+        const d = tryParseISO(lastModHeader);
+        if (d) headerDate = d.toISOString();
+      }
+
+      // Read first 100KB — dates in meta/JSON-LD are usually in <head>
       const reader = res.body.getReader();
       const chunks = [];
       let totalSize = 0;
-      const maxSize = 50 * 1024;
+      const maxSize = 100 * 1024;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -539,10 +559,19 @@ async function fetchDateFromUrl(url) {
         }, new Uint8Array())
       );
 
-      const dateInfo = extractDateFromHtml(html);
+      let dateInfo = extractDateFromHtml(html);
+
+      // Fallback: try to extract date from URL path (e.g. /2023/04/15/...)
+      if (!dateInfo) {
+        dateInfo = extractDateFromUrlPath(url);
+      }
+
+      // Fallback: use Last-Modified header
+      if (!dateInfo && headerDate) {
+        dateInfo = { published: headerDate, modified: null, confidence: 0.60, source: 'http-header' };
+      }
 
       if (dateInfo) {
-        // Cache the result
         const entry = {
           published: dateInfo.published,
           modified: dateInfo.modified,
@@ -553,11 +582,15 @@ async function fetchDateFromUrl(url) {
         const freshCache = (await getStorage(['cache'])).cache || {};
         freshCache[url] = entry;
         await setStorage({ cache: freshCache });
+        console.debug('[Stale] deep fetch OK:', dateInfo.source, url);
         return { entry };
       }
 
+      // Cache negative result to avoid re-fetching
+      await cacheNegativeResult(url);
       return { entry: null };
-    } catch (_) {
+    } catch (err) {
+      console.debug('[Stale] deep fetch error:', err.name, url);
       return { entry: null };
     } finally {
       fetchInFlight.delete(url);
@@ -569,13 +602,58 @@ async function fetchDateFromUrl(url) {
 }
 
 /**
+ * Cache a negative result (no date found) so we don't re-fetch the same URL.
+ * Uses a shorter TTL (6 hours) than positive results (24 hours).
+ */
+async function cacheNegativeResult(url) {
+  try {
+    const freshCache = (await getStorage(['cache'])).cache || {};
+    freshCache[url] = {
+      published: null,
+      modified: null,
+      confidence: 0,
+      source: 'no-date',
+      cachedAt: Date.now(),
+      negativeTTL: 6 * 60 * 60 * 1000  // 6 hours
+    };
+    await setStorage({ cache: freshCache });
+  } catch (_) {}
+}
+
+/**
+ * Extract date from URL path patterns like /2023/04/15/article-title
+ */
+function extractDateFromUrlPath(url) {
+  try {
+    const path = new URL(url).pathname;
+    // /YYYY/MM/DD/ or /YYYY/MM/ patterns
+    const m = path.match(/\/(\d{4})\/(\d{1,2})(?:\/(\d{1,2}))?(?:\/|$)/);
+    if (m) {
+      const year = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10);
+      const day = m[3] ? parseInt(m[3], 10) : 1;
+      if (year >= 1995 && year <= new Date().getFullYear() && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        const d = new Date(year, month - 1, day);
+        if (!isNaN(d.getTime()) && d.getTime() <= Date.now() + 86400000) {
+          return { published: d.toISOString(), modified: null, confidence: 0.55, source: 'url-path' };
+        }
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+/**
  * Extract dates from raw HTML string using meta tags, JSON-LD, and time elements.
  */
 function extractDateFromHtml(html) {
-  // 1) Open Graph / meta tags
+  // 1) Open Graph / meta tags (expanded patterns for WordPress, Hugo, Jekyll, Drupal, etc.)
+  const pubNames = 'article:published_time|datePublished|date|DC\\.date\\.issued|sailthru\\.date|publish[_-]?date|parsely-pub-date|cXenseParse:recs:publishtime|dcterms\\.date|citation_publication_date|citation_date|pubdate|og:article:published_time';
+  const modNames = 'og:updated_time|article:modified_time|dateModified|last-modified|dcterms\\.modified|updated_time';
+  const allNames = pubNames + '|' + modNames;
   const metaPatterns = [
-    /< *meta[^>]+(?:property|name)\s*=\s*["'](?:article:published_time|datePublished|date|DC\.date\.issued|sailthru\.date|publish[_-]?date|og:updated_time|article:modified_time)["'][^>]+content\s*=\s*["']([^"']+)["']/gi,
-    /< *meta[^>]+content\s*=\s*["']([^"']+)["'][^>]+(?:property|name)\s*=\s*["'](?:article:published_time|datePublished|date|DC\.date\.issued|sailthru\.date|publish[_-]?date|og:updated_time|article:modified_time)["']/gi
+    new RegExp('< *meta[^>]+(?:property|name|itemprop)\\s*=\\s*["\'](?:' + allNames + ')["\'][^>]+content\\s*=\\s*["\']([^"\']+)["\']', 'gi'),
+    new RegExp('< *meta[^>]+content\\s*=\\s*["\']([^"\']+)["\'][^>]+(?:property|name|itemprop)\\s*=\\s*["\'](?:' + allNames + ')["\']', 'gi')
   ];
 
   let published = null;
@@ -588,12 +666,22 @@ function extractDateFromHtml(html) {
       const d = tryParseISO(val);
       if (d) {
         const prop = m[0].toLowerCase();
-        if (prop.includes('modified') || prop.includes('updated')) {
+        if (prop.includes('modified') || prop.includes('updated') || prop.includes('last-modified')) {
           if (!modified) modified = d.toISOString();
         } else {
           if (!published) published = d.toISOString();
         }
       }
+    }
+  }
+
+  // 1b) WordPress-specific: <meta name="date" content="..."> or inline "wp-date"
+  if (!published) {
+    const wpDateRe = /class\s*=\s*["'][^"']*(?:entry-date|post-date|published|date-published)[^"']*["'][^>]*>\s*(?:<[^>]+>)*\s*(\d{4}-\d{2}-\d{2})/gi;
+    let wm;
+    while ((wm = wpDateRe.exec(html)) !== null) {
+      const d = tryParseISO(wm[1]);
+      if (d) { published = d.toISOString(); break; }
     }
   }
 

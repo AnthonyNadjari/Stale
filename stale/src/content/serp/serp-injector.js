@@ -186,6 +186,11 @@
       box-shadow: 0 2px 6px rgba(0,0,0,0.12);
       position: relative; direction: ltr;
     }
+    .b.checking { animation: stale-pulse 1.2s ease-in-out infinite; }
+    @keyframes stale-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
     .d { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
          background: rgba(255,255,255,0.9); flex-shrink: 0; }
     .l { font-weight: 600; }
@@ -210,20 +215,25 @@
   // ── Deep fetch queue: fetch URLs in background to detect dates ──
 
   const deepFetchQueue = [];
-  const DEEP_FETCH_CONCURRENCY = 3;
+  const DEEP_FETCH_CONCURRENCY = 5;
   let deepFetchRunning = false;
 
   async function processDeepFetchQueue() {
     if (deepFetchRunning) return;
     deepFetchRunning = true;
+    console.log('[Stale] Deep fetch: processing', deepFetchQueue.length, 'URLs');
 
     while (deepFetchQueue.length > 0) {
-      // Process in batches
       const batch = deepFetchQueue.splice(0, DEEP_FETCH_CONCURRENCY);
       await Promise.all(batch.map(async ({ result, url }) => {
         try {
           const resp = await Messaging.fetchDateFromUrl(url);
-          if (!resp?.entry) return;
+          if (!resp?.entry) {
+            // No date found — update badge to static Unknown (stop pulsing)
+            const noDateFreshness = Freshness.getFreshnessInfo(null, null, thresholds);
+            injectBadge(result, noDateFreshness, null);
+            return;
+          }
 
           const dateInfo = {
             published: resp.entry.published ? new Date(resp.entry.published) : null,
@@ -235,8 +245,9 @@
           // Recompute freshness and update the badge
           const freshness = Freshness.getFreshnessInfo(dateInfo.published, dateInfo.modified, thresholds);
           injectBadge(result, freshness, dateInfo);
-        } catch {
-          // Fetch failed — leave the Unknown badge
+          console.debug('[Stale] Deep fetch updated badge:', freshness.label, url);
+        } catch (err) {
+          console.debug('[Stale] Deep fetch failed for', url, err);
         }
       }));
     }
@@ -348,15 +359,13 @@
         }
       }
 
-      // Compute freshness & inject badge (may be "Unknown" initially)
-      const freshness = dateInfo
-        ? Freshness.getFreshnessInfo(dateInfo.published, dateInfo.modified, thresholds)
-        : Freshness.getFreshnessInfo(null, null, thresholds);
-
-      injectBadge(result, freshness, dateInfo);
-
-      // If still no date, fire a background fetch to the actual URL
-      if (!dateInfo) {
+      if (dateInfo) {
+        // We have a date — show the real badge
+        const freshness = Freshness.getFreshnessInfo(dateInfo.published, dateInfo.modified, thresholds);
+        injectBadge(result, freshness, dateInfo);
+      } else {
+        // No date from snippet/cache — show pulsing "Checking…" and queue deep fetch
+        injectBadge(result, null, 'checking');
         deepFetchQueue.push({ result, url });
       }
     }
@@ -408,6 +417,9 @@
    * Uses Shadow DOM to fully isolate from Google's stylesheets (which reverse text).
    * Badge is appended inside the h3 so it stays on the same line as the title.
    */
+  /**
+   * Inject badge. Pass dateInfo='checking' for the pulsing "Checking…" state.
+   */
   function injectBadge(resultEl, freshness, dateInfo) {
     try {
       resultEl.querySelectorAll('[data-stale-badge]').forEach(el => el.remove());
@@ -415,7 +427,11 @@
       const h3 = resultEl.querySelector('h3');
       if (!h3) return;
 
-      const bg = freshness.color || '#6b7280';
+      const isChecking = dateInfo === 'checking';
+      const bg = isChecking ? '#9ca3af' : (freshness.color || '#6b7280');
+      const label = isChecking ? 'Checking\u2026' : freshness.label;
+      const ageText = isChecking ? '' : ('\u00b7 ' + freshness.ageText);
+      const badgeClass = isChecking ? 'b checking' : 'b';
 
       // Shadow DOM host — appended inside h3 to stay on the same line as title text
       const host = document.createElement('span');
@@ -424,29 +440,33 @@
 
       // Build tooltip HTML
       let tipRows = '';
-      if (dateInfo?.published) tipRows += `<div class="tr"><strong>Published:</strong> ${freshness.publishedFormatted}</div>`;
-      if (dateInfo?.modified) tipRows += `<div class="tr"><strong>Modified:</strong> ${freshness.modifiedFormatted}</div>`;
-      if (dateInfo?.source) tipRows += `<div class="ts">Source: ${dateInfo.source}</div>`;
-      if (!dateInfo) tipRows += `<div class="tr">No date found yet. Visit the page to detect.</div>`;
+      if (isChecking) {
+        tipRows = '<div class="tr">Fetching page to detect publication date\u2026</div>';
+      } else if (dateInfo?.published) {
+        tipRows += `<div class="tr"><strong>Published:</strong> ${freshness.publishedFormatted}</div>`;
+        if (dateInfo.modified) tipRows += `<div class="tr"><strong>Modified:</strong> ${freshness.modifiedFormatted}</div>`;
+        if (dateInfo.source) tipRows += `<div class="ts">Source: ${dateInfo.source}</div>`;
+      } else if (!dateInfo) {
+        tipRows = '<div class="tr">No date detected on this page.</div>';
+      }
 
       shadow.innerHTML = `
         <style>${BADGE_SHADOW_CSS}</style>
-        <span class="b" style="background:${bg}">
+        <span class="${badgeClass}" style="background:${bg}">
           <span class="d"></span>
-          <span class="l">${freshness.label}</span>
-          <span class="a">\u00b7 ${freshness.ageText}</span>
+          <span class="l">${label}</span>
+          ${ageText ? `<span class="a">${ageText}</span>` : ''}
           <span class="t">
             <div class="th">
               <span class="td" style="background:${bg}"></span>
-              <span class="tl" style="color:${bg}">${freshness.label}</span>
-              <span class="ta">${freshness.ageText}</span>
+              <span class="tl" style="color:${bg}">${label}</span>
+              ${!isChecking ? `<span class="ta">${freshness.ageText}</span>` : ''}
             </div>
             ${tipRows}
           </span>
         </span>
       `;
 
-      // Place inside h3 at the end — stays on the same visual line as title text
       h3.appendChild(host);
     } catch (e) {
       console.warn('[Stale] injectBadge failed:', e);
